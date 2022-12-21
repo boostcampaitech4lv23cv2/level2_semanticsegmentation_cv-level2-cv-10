@@ -259,7 +259,7 @@ if __name__ == "__main__":
     # )
 
     # Make Model
-    with open('./model/test.py', 'r') as f:
+    with open(args.model, 'r') as f:
         model_file = f.readlines()
     model_str = ''.join(model_file)
     for line in model_file:

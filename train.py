@@ -55,7 +55,7 @@ def collate_fn(batch):
     return tuple(zip(*batch))
 
 
-def train(args):
+def train(args, model):
     print(f'Start training...')
 
     # -- settings
@@ -89,15 +89,7 @@ def train(args):
                             shuffle=False,
                             num_workers=4,
                             collate_fn=collate_fn)
-                                         
-    # -- model
-    model_module = getattr(smp, args.decoder)
-    model = model_module(
-        encoder_name=args.encoder, # choose encoder, e.g. mobilenet_v2 or efficientnet-b7
-        encoder_weights=args.encoder_weights,     # use `imagenet` pre-trained weights for encoder initialization
-        in_channels=3,                  # model input channels (1 for gray-scale images, 3 for RGB, etc.)
-        classes=11,                     # model output channels (number of classes in your dataset)
-    )
+
     # device 할당
     model = model.to(device)   
 
@@ -182,25 +174,27 @@ def validation(model, data_loader, device, criterion, epoch, args):
         cnt = 0
         
         hist = np.zeros((n_class, n_class))
-        for step, (images, masks, _) in enumerate(data_loader):
-            
-            images = torch.stack(images)       
-            masks = torch.stack(masks).long()  
+        with tqdm(total=len(data_loader)) as pbar:
+            for step, (images, masks, _) in enumerate(data_loader):
+                
+                images = torch.stack(images)       
+                masks = torch.stack(masks).long()  
 
-            images, masks = images.to(device), masks.to(device)            
-            
-            # device 할당
-            model = model.to(device)
-            
-            outputs = model(images)
-            loss = criterion(outputs, masks)
-            total_loss += loss
-            cnt += 1
-            
-            outputs = torch.argmax(outputs, dim=1).detach().cpu().numpy()
-            masks = masks.detach().cpu().numpy()
-            
-            hist = add_hist(hist, masks, outputs, n_class=n_class)
+                images, masks = images.to(device), masks.to(device)            
+                
+                # device 할당
+                model = model.to(device)
+                
+                outputs = model(images)
+                loss = criterion(outputs, masks)
+                total_loss += loss
+                cnt += 1
+                
+                outputs = torch.argmax(outputs, dim=1).detach().cpu().numpy()
+                masks = masks.detach().cpu().numpy()
+                
+                hist = add_hist(hist, masks, outputs, n_class=n_class)
+                pbar.update(1)
         
         acc, acc_cls, mIoU, fwavacc, IoU = label_accuracy_score(hist)
         category_list = ['Background', 'General trash', 'Paper', 'Paper pack', 'Metal',
@@ -256,7 +250,21 @@ if __name__ == "__main__":
     # wandb.define_metric("Val Loss", summary="min")
     # wandb.define_metric("Val mIoU", summary="max")
 
-    train(args)
+    # model_module = getattr(smp, args.decoder)
+    # model = model_module(
+    #     encoder_name=args.encoder, # choose encoder, e.g. mobilenet_v2 or efficientnet-b7
+    #     encoder_weights=args.encoder_weights,     # use `imagenet` pre-trained weights for encoder initialization
+    #     in_channels=3,                  # model input channels (1 for gray-scale images, 3 for RGB, etc.)
+    #     classes=11,                     # model output channels (number of classes in your dataset)
+    # )
+
+    # Make Model
+    with open('./model/test.py', 'r') as f:
+        model_file = f.readlines()
+    model_str = ''.join(model_file)
+    for line in model_file:
+        model_str += line
+    exec(model_str, globals())
+    train(args, model)
 
     # wandb.finish()
-

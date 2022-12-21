@@ -94,6 +94,7 @@ class CosineAnnealingWarmupRestarts(_LRScheduler):
 _scheduler_entrypoints = {
     "Step": torch.optim.lr_scheduler.StepLR,
     "MultiStep": torch.optim.lr_scheduler.MultiStepLR,
+    "ReduceOP" : torch.optim.lr_scheduler.ReduceLROnPlateau,
     "CosineAnnealing": torch.optim.lr_scheduler.CosineAnnealingLR,
     "CosineAnnealingWR": CosineAnnealingWarmupRestarts,
 }
@@ -114,6 +115,8 @@ def create_scheduler(optimizer, scheduler_name, epochs, lr):
             scheduler = create_fn(optimizer, step_size=epochs // 4)
         elif scheduler_name == 'MultiStep':
             scheduler = create_fn(optimizer, milestones=[epochs // 2], gamma=0.1)
+        elif scheduler_name == 'ReduceOP':
+            scheduler = create_fn(optimizer, factor=0.5, patience=5) 
         elif scheduler_name == 'CosineAnnealing':
             scheduler = create_fn(optimizer, T_max= epochs, eta_min=lr / 1000)
         elif scheduler_name == 'CosineAnnealingWR':

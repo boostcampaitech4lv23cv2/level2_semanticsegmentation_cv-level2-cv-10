@@ -70,8 +70,8 @@ def train(args):
                           ToTensorV2()
                           ])
     # -- data_set
-    train_path = dataset_path + '/train.json'
-    val_path = dataset_path + '/val.json'
+    train_path = dataset_path + args.train_path
+    val_path = dataset_path + args.val_path
 
     train_dataset = CustomDataLoader(data_dir=train_path, dataset_path=dataset_path, mode='train', transform=train_transform)
     val_dataset = CustomDataLoader(data_dir=val_path, dataset_path=dataset_path, mode='val', transform=val_transform)
@@ -103,7 +103,7 @@ def train(args):
     # -- loss & metric
     criterion = create_criterion(args.criterion)
 
-    # Optimizer 정의
+    # -- optimizer
     opt_module = getattr(import_module("torch.optim"), args.optimizer)  
     optimizer = opt_module(
         filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=1e-6
@@ -117,6 +117,9 @@ def train(args):
     best_loss = np.inf
     val_every = 1
     
+    # Grad accumulation
+    NUM_ACCUM = args.grad_accum
+    optimizer.zero_grad()
     # average = macro가 기본 옵션입니다
     hist = MulticlassJaccardIndex(num_classes=n_class).cuda()
     for epoch in range(args.epochs):
@@ -134,9 +137,11 @@ def train(args):
             
             # loss 계산 (cross entropy loss)
             loss = criterion(outputs, masks)
-            optimizer.zero_grad()
             loss.backward()
-            optimizer.step()
+
+            if step % NUM_ACCUM == 0:
+                optimizer.step()
+                optimizer.zero_grad()
             
             # batch에 대한 mIoU 계산, baseline code는 누적을 계산합니다
             mIoU = hist(outputs, masks).item()

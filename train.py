@@ -1,6 +1,7 @@
 from importlib import import_module
 from pathlib import Path
 
+from tqdm import tqdm
 import os
 import random
 import time
@@ -19,7 +20,7 @@ from loss import create_criterion
 from scheduler import create_scheduler
 
 import segmentation_models_pytorch as smp
-from torchmetrics.classification import MulticlassJaccardIndex
+# from torchmetrics.classification import MulticlassJaccardIndex
 
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
@@ -121,36 +122,42 @@ def train(args):
         model.train()
 
         hist = np.zeros((n_class, n_class))
-        for step, (images, masks, _) in enumerate(train_loader):
-            images = torch.stack(images)       
-            masks = torch.stack(masks).long() 
-            
-            # gpu 연산을 위해 device 할당
-            images, masks = images.to(device), masks.to(device)
-                        
-            # inference
-            outputs = model(images)
-            
-            # loss 계산 (cross entropy loss)
-            loss = criterion(outputs, masks)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            
-            outputs = torch.argmax(outputs, dim=1).detach().cpu().numpy()
-            masks = masks.detach().cpu().numpy()
-            
-            hist = add_hist(hist, masks, outputs, n_class=n_class)
-            acc, acc_cls, mIoU, fwavacc, IoU = label_accuracy_score(hist)
-            
-            # step 주기에 따른 loss 출력
-            if (step + 1) % args.log_interval == 0:
+        with tqdm(total=len(train_loader)) as pbar:
+            for step, (images, masks, _) in enumerate(train_loader):
+                pbar.set_description('[Epoch {}]'.format(epoch +1))
+                images = torch.stack(images)       
+                masks = torch.stack(masks).long() 
+                
+                # gpu 연산을 위해 device 할당
+                images, masks = images.to(device), masks.to(device)
+                            
+                # inference
+                outputs = model(images)
+                
+                # loss 계산 (cross entropy loss)
+                loss = criterion(outputs, masks)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                
+                outputs = torch.argmax(outputs, dim=1).detach().cpu().numpy()
+                masks = masks.detach().cpu().numpy()
+                
+                hist = add_hist(hist, masks, outputs, n_class=n_class)
+                acc, acc_cls, mIoU, fwavacc, IoU = label_accuracy_score(hist)
+                
+                pbar.update(1)
+
+                logging = {
+                    'Loss': round(loss.item(),4),
+                    'mIoU': round(mIoU,4)
+                }
+                pbar.set_postfix(logging)
                 current_lr = get_lr(optimizer)
-                print(f'Epoch [{epoch+1}/{args.epochs}] || Step [{step+1}/{len(train_loader)}] || Loss: {round(loss.item(),4)} || mIoU: {round(mIoU,4)}')
-                # wandb
-                # wandb.log(
-                #     {'Tr Loss': loss.item(), 'Tr acc': acc, 'Tr mIoU': mIoU, 'lr': current_lr}
-                # )
+                    # wandb
+                    # wandb.log(
+                    #     {'Tr Loss': loss.item(), 'Tr acc': acc, 'Tr mIoU': mIoU, 'lr': current_lr}
+                    # )
              
         # validation 주기에 따른 loss 출력 및 best model 저장
         if (epoch + 1) % val_every == 0:

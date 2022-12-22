@@ -128,5 +128,5 @@ def create_scheduler(optimizer, scheduler_name, epochs, lr):
                                           warmup_steps=epochs // 40,
                                           gamma=0.5)
     else:
-        raise RuntimeError("Unknown loss (%s)" % scheduler_name)
+        raise RuntimeError("Unknown scheduler (%s)" % scheduler_name)
     return scheduler

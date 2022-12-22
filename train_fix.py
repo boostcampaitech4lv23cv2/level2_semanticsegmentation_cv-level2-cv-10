@@ -28,6 +28,7 @@ import wandb
 import yaml
 from easydict import EasyDict
 
+from pytorchtools import EarlyStopping
 
 def seed_everything(seed):
     torch.manual_seed(seed)
@@ -70,8 +71,8 @@ def train(args):
                           ToTensorV2()
                           ])
     # -- data_set
-    train_path = dataset_path + '/train.json'
-    val_path = dataset_path + '/val.json'
+    train_path = dataset_path + args.train_path
+    val_path = dataset_path + args.val_path
 
     train_dataset = CustomDataLoader(data_dir=train_path, dataset_path=dataset_path, mode='train', transform=train_transform)
     val_dataset = CustomDataLoader(data_dir=val_path, dataset_path=dataset_path, mode='val', transform=val_transform)
@@ -117,6 +118,12 @@ def train(args):
     best_loss = np.inf
     val_every = 1
     
+    # early stop
+    early_stopping = EarlyStopping(patience = 5, verbose = True, path="./saved/best_model.pt")
+
+    # Grad accumulation
+    NUM_ACCUM = args.grad_accum
+    optimizer.zero_grad()
     # average = macro가 기본 옵션입니다
     hist = MulticlassJaccardIndex(num_classes=n_class).cuda()
     for epoch in range(args.epochs):
@@ -134,9 +141,11 @@ def train(args):
             
             # loss 계산 (cross entropy loss)
             loss = criterion(outputs, masks)
-            optimizer.zero_grad()
             loss.backward()
-            optimizer.step()
+
+            if step % NUM_ACCUM == 0:
+                optimizer.step()
+                optimizer.zero_grad()
             
             # batch에 대한 mIoU 계산, baseline code는 누적을 계산합니다
             mIoU = hist(outputs, masks).item()
@@ -146,14 +155,20 @@ def train(args):
                 current_lr = get_lr(optimizer)
                 print(f'Epoch [{epoch+1}/{args.epochs}] || Step [{step+1}/{len(train_loader)}] || Loss: {round(loss.item(),4)} || mIoU: {round(mIoU,4)}')
                 # wandb
-                # wandb.log(
-                #     {'Tr Loss': loss.item(), 'Tr mIoU': mIoU, 'lr': current_lr}
-                # )
-        
+                wandb.log(
+                    {'Tr Loss': loss.item(), 'Tr mIoU': mIoU, 'lr': current_lr}
+                )
+
         hist.reset()
         # validation 주기에 따른 loss 출력 및 best model 저장
         if (epoch + 1) % val_every == 0:
             avrg_loss = validation(model, val_loader, device, criterion, epoch, args)
+
+            early_stopping(avrg_loss, model)
+            if early_stopping.early_stop:
+                print("Early stopping")
+                break
+
             if avrg_loss < best_loss:
                 print(f"Best performance at epoch: {epoch + 1}")
                 print(f"Save model in {saved_dir}")
@@ -207,9 +222,10 @@ def validation(model, data_loader, device, criterion, epoch, args):
         print(f'Validation #{epoch} || Average Loss: {round(avrg_loss.item(), 4)} || macro : {round(macro, 4)} || micro: {round(micro, 4)}')
         print(f'IoU by class : {IoU_by_class}')
         # wandb
-        # wandb.log(
-        #     {'Val Loss': avrg_loss.item(), 'Val macro': macro, 'Val micro': micro, 'IoU by class': IoU_by_class}
-        # )
+        wandb.log(
+            # {'Val Loss': avrg_loss.item(), 'Val macro': macro, 'Val micro': micro, 'IoU by class': IoU_by_class}
+            {'Val Loss': avrg_loss.item(), 'Val macro': macro, 'Val micro': micro}
+        )
 
         
     return avrg_loss
@@ -229,30 +245,29 @@ if __name__ == "__main__":
     if not os.path.isdir(saved_dir):                                                           
         os.mkdir(saved_dir)
 
-    # CFG = {
-    #     "epochs" : args.epochs,
-    #     "batch_size" : args.batch_size,
-    #     "learning_rate" : args.lr,
-    #     "seed" : args.seed,
-    #     "encoder" : args.encoder,
-    #     "encoder_weights" : args.encoder_weights,
-    #     "decoder" : args.decoder,
-    #     "optimizer" : args.optimizer,
-    #     "scheduler" : args.scheduler,
-    #     "criterion" : args.criterion,
-    # }
+    CFG = {
+        "epochs" : args.epochs,
+        "batch_size" : args.batch_size,
+        "learning_rate" : args.lr,
+        "seed" : args.seed,
+        "encoder" : args.encoder,
+        "encoder_weights" : args.encoder_weights,
+        "decoder" : args.decoder,
+        "optimizer" : args.optimizer,
+        "scheduler" : args.scheduler,
+        "criterion" : args.criterion,
+    }
+    wandb.init(
+        project=args.project, entity=args.entity, name=args.experiment_name, config=CFG,
+    )
 
-    # wandb.init(
-    #     project=args.project, entity=args.entity, name=args.experiment_name, config=CFG,
-    # )
+    wandb.define_metric("Tr Loss", summary="min")
+    wandb.define_metric("Tr mIoU", summary="max")
 
-    # wandb.define_metric("Tr Loss", summary="min")
-    # wandb.define_metric("Tr mIoU", summary="max")
-
-    # wandb.define_metric("Val Loss", summary="min")
-    # wandb.define_metric("Val mIoU", summary="max")
+    wandb.define_metric("Val Loss", summary="min")
+    wandb.define_metric("Val mIoU", summary="max")
 
     train(args)
 
-    # wandb.finish()
+    wandb.finish()
 

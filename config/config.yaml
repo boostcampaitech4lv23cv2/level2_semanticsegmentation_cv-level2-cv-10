@@ -1,22 +1,25 @@
 train:
   experiment_name: "test"
-  batch_size: 2 # "input batch size for training"
+  train_path: '/train.json'
+  val_path: '/val.json'
+  batch_size: 8 # "input batch size for training"
   criterion: cross_entropy # "criterion type"
-  epochs: 15 # "number of epochs to train"
-  log_interval: 100 # "how many batches to wait before logging training status"
-  lr: 0.001 # "learning rate"
+  epochs: 200 # "number of epochs to train"
+  log_interval: 25 # "how many batches to wait before logging training status"
+  grad_accum: 2 # "grad_accumulation"
+  lr: 0.0001 # "learning rate"
   encoder: "efficientnet-b0"  # "encoder name"
   encoder_weights: "imagenet" # "pretrained weights"
   decoder: Unet # "decoder name"
-  optimizer: "AdamW" 
+  optimizer: "Adam" 
   seed: 42 # "random seed"
-  valid_batch_size: 2 # "input batch size for validing"
-  scheduler: Step
+  valid_batch_size: 8 # "input batch size for validing"
+  scheduler: CosineAnnealingWR
   project: "semantic_seg"
   entity: "cv10"
 test:
   batch_size: 2 # "input batch size for validing"
   encoder: "efficientnet-b0"  # "encoder name"
   encoder_weights: "imagenet" # "pretrained weights"
-  decoder: Unet
+  decoder: Unet # "decoder name"
   output_dir: ./output

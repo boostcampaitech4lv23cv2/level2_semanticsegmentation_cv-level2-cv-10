@@ -99,8 +99,7 @@ if __name__ == "__main__":
     os.makedirs(args.output_dir, exist_ok=True)
 
     # sample_submisson.csv 열기
-    submission = pd.read_csv(os.path.join(args.output_dir, './sample_submission.csv'), index_col=None)
-
+    submission = pd.read_csv("./output/sample_submission.csv", index_col=False)
     # test set에 대한 prediction
     file_names, preds = test(dataset_path, args)
 
@@ -110,4 +109,4 @@ if __name__ == "__main__":
                                    ignore_index=True)
 
     # submission.csv로 저장
-    submission.to_csv(os.path.join(args.output_dir, '/best_model.csv'), index=False)
+    submission.to_csv("./output/output.csv", index=False)

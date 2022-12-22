@@ -148,9 +148,9 @@ def train(args):
                 current_lr = get_lr(optimizer)
                 print(f'Epoch [{epoch+1}/{args.epochs}] || Step [{step+1}/{len(train_loader)}] || Loss: {round(loss.item(),4)} || mIoU: {round(mIoU,4)}')
                 # wandb
-                # wandb.log(
-                #     {'Tr Loss': loss.item(), 'Tr acc': acc, 'Tr mIoU': mIoU, 'lr': current_lr}
-                # )
+                wandb.log(
+                    {'Tr Loss': loss.item(), 'Tr acc': acc, 'Tr mIoU': mIoU, 'lr': current_lr}
+                )
              
         # validation 주기에 따른 loss 출력 및 best model 저장
         if (epoch + 1) % val_every == 0:
@@ -204,9 +204,9 @@ def validation(model, data_loader, device, criterion, epoch, args):
         print(f'Validation #{epoch + 1} || Average Loss: {round(avrg_loss.item(), 4)} || Accuracy : {round(acc, 4)} || mIoU: {round(mIoU, 4)}')
         print(f'IoU by class : {IoU_by_class}')
         # wandb
-        # wandb.log(
-        #     {'Val Loss': avrg_loss.item(), 'Val Acc': acc, 'Val mIoU': mIoU, 'IoU by class': IoU_by_class}
-        # )
+        wandb.log(
+            {'Val Loss': avrg_loss.item(), 'Val Acc': acc, 'Val mIoU': mIoU, 'IoU by class': IoU_by_class}
+        )
 
         
     return avrg_loss
@@ -226,30 +226,30 @@ if __name__ == "__main__":
     if not os.path.isdir(saved_dir):                                                           
         os.mkdir(saved_dir)
 
-    # CFG = {
-    #     "epochs" : args.epochs,
-    #     "batch_size" : args.batch_size,
-    #     "learning_rate" : args.lr,
-    #     "seed" : args.seed,
-    #     "encoder" : args.encoder,
-    #     "encoder_weights" : args.encoder_weights,
-    #     "decoder" : args.decoder,
-    #     "optimizer" : args.optimizer,
-    #     "scheduler" : args.scheduler,
-    #     "criterion" : args.criterion,
-    # }
+    CFG = {
+        "epochs" : args.epochs,
+        "batch_size" : args.batch_size,
+        "learning_rate" : args.lr,
+        "seed" : args.seed,
+        "encoder" : args.encoder,
+        "encoder_weights" : args.encoder_weights,
+        "decoder" : args.decoder,
+        "optimizer" : args.optimizer,
+        "scheduler" : args.scheduler,
+        "criterion" : args.criterion,
+    }
 
-    # wandb.init(
-    #     project=args.project, entity=args.entity, name=args.experiment_name, config=CFG,
-    # )
+    wandb.init(
+        project=args.project, entity=args.entity, name=args.experiment_name, config=CFG,
+    )
 
-    # wandb.define_metric("Tr Loss", summary="min")
-    # wandb.define_metric("Tr mIoU", summary="max")
+    wandb.define_metric("Tr Loss", summary="min")
+    wandb.define_metric("Tr mIoU", summary="max")
 
-    # wandb.define_metric("Val Loss", summary="min")
-    # wandb.define_metric("Val mIoU", summary="max")
+    wandb.define_metric("Val Loss", summary="min")
+    wandb.define_metric("Val mIoU", summary="max")
 
     train(args)
 
-    # wandb.finish()
+    wandb.finish()
 

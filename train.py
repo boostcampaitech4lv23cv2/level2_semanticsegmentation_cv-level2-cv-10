@@ -150,7 +150,7 @@ def train(args):
     # -- optimizer
     opt_module = getattr(import_module("torch.optim"), args.optimizer)  
     optimizer = opt_module(
-        filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=1e-6
+        filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=args.lr * 100
     )
 
     # # -- scheduler

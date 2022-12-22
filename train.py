@@ -28,6 +28,9 @@ import wandb
 import yaml
 from easydict import EasyDict
 
+import matplotlib.pyplot as plt
+from tqdm import tqdm
+import cv2
 
 def seed_everything(seed):
     torch.manual_seed(seed)
@@ -52,6 +55,47 @@ def save_model(model, saved_dir, file_name='best_model.pt'):
 
 def collate_fn(batch):
     return tuple(zip(*batch))
+
+
+def save_table(table_name, model, val_loader, device):
+  table = wandb.Table(columns=['Original Image', 'Original Mask', 'Predicted Mask'], allow_mixed_types = True)
+
+  for step, (im, mask, _) in tqdm(enumerate(val_loader), total = len(val_loader)):
+
+    im = torch.stack(im)       
+    mask = torch.stack(mask).long()
+
+    im, mask, = im.to(device), mask.to(device)
+
+    _mask = model(im)
+    _, _mask = torch.max(_mask, dim=1)
+
+    plt.figure(figsize=(10,10))
+    plt.axis("off")
+    plt.imshow(im[0].permute(1,2,0).detach().cpu()[:,:,0])
+    plt.savefig("original_image.jpg")
+    plt.close()
+
+    plt.figure(figsize=(10,10))
+    plt.axis("off")
+    plt.imshow(mask.permute(1,2,0).detach().cpu()[:,:,0])
+    plt.savefig("original_mask.jpg")
+    plt.close()
+
+    plt.figure(figsize=(10,10))
+    plt.axis("off")
+    plt.imshow(_mask.permute(1,2,0).detach().cpu()[:,:,0])
+    plt.savefig("predicted_mask.jpg")
+    plt.close()
+
+    table.add_data(
+        wandb.Image(cv2.cvtColor(cv2.imread("original_image.jpg"), cv2.COLOR_BGR2RGB)),
+        wandb.Image(cv2.cvtColor(cv2.imread("original_mask.jpg"), cv2.COLOR_BGR2RGB)),
+        wandb.Image(cv2.cvtColor(cv2.imread("predicted_mask.jpg"), cv2.COLOR_BGR2RGB))
+    )
+
+
+  wandb.log({table_name: table})
 
 
 def train(args):
@@ -184,7 +228,10 @@ def train(args):
                 break
         
         if args.scheduler:
-            scheduler.step()       
+            scheduler.step()  
+
+    save_table("Predictions", model, val_loader, device)
+   
 
 def validation(model, data_loader, device, criterion, epoch, args):
     print(f'Start validation!')

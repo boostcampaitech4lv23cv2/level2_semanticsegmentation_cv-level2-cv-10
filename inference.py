@@ -25,8 +25,8 @@ def collate_fn(batch):
 def load_model(encoder, encoder_weights, decoder, device):
     model_module = getattr(smp, decoder)
     model = model_module(
-        encoder_name=args.encoder,
-        encoder_weights=args.encoder_weights,     
+        encoder_name=encoder,
+        encoder_weights=encoder_weights,     
         in_channels=3,               
         classes=11,                     
     )
@@ -89,24 +89,24 @@ def test(dataset_path, args):
     return file_names, preds_array
 
 
-if __name__ == "__main__":
-    dataset_path = '/opt/ml/input/data'
-    CONFIG_FILE_NAME = "./config/config.yaml"
-    with open(CONFIG_FILE_NAME, "r") as yml_config_file:
-        args = yaml.load(yml_config_file, Loader=yaml.FullLoader)
-        args = EasyDict(args["test"])
+dataset_path = '/opt/ml/input/data'
+CONFIG_FILE_NAME = "./config/config.yaml"
+with open(CONFIG_FILE_NAME, "r") as yml_config_file:
+    args = yaml.load(yml_config_file, Loader=yaml.FullLoader)
+    args = EasyDict(args["test"])
 
-    os.makedirs(args.output_dir, exist_ok=True)
+os.makedirs(args.output_dir, exist_ok=True)
 
-    # sample_submisson.csv 열기
-    submission = pd.read_csv("./output/sample_submission.csv", index_col=False)
-    # test set에 대한 prediction
-    file_names, preds = test(dataset_path, args)
+# sample_submisson.csv 열기
+submission = pd.read_csv(os.path.join(args.output_dir, 'sample_submission.csv'), index_col=None)
 
-    # PredictionString 대입
-    for file_name, string in zip(file_names, preds):
-        submission = submission.append({"image_id" : file_name, "PredictionString" : ' '.join(str(e) for e in string.tolist())}, 
+# test set에 대한 prediction
+file_names, preds = test(dataset_path, args)
+
+# PredictionString 대입
+for file_name, string in zip(file_names, preds):
+    submission = submission.append({"image_id" : file_name, "PredictionString" : ' '.join(str(e) for e in string.tolist())}, 
                                    ignore_index=True)
 
-    # submission.csv로 저장
-    submission.to_csv("./output/output.csv", index=False)
+# submission.csv로 저장
+submission.to_csv(os.path.join(args.output_dir, 'best_model.csv'), index=False)

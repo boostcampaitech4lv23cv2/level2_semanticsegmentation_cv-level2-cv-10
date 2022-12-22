@@ -246,30 +246,30 @@ if __name__ == "__main__":
     if not os.path.isdir(saved_dir):                                                           
         os.mkdir(saved_dir)
 
-    # CFG = {
-    #     "epochs" : args.epochs,
-    #     "batch_size" : args.batch_size,
-    #     "learning_rate" : args.lr,
-    #     "seed" : args.seed,
-    #     "encoder" : args.encoder,
-    #     "encoder_weights" : args.encoder_weights,
-    #     "decoder" : args.decoder,
-    #     "optimizer" : args.optimizer,
-    #     "scheduler" : args.scheduler,
-    #     "criterion" : args.criterion,
-    # }
+    CFG = {
+        "epochs" : args.epochs,
+        "batch_size" : args.batch_size,
+        "learning_rate" : args.lr,
+        "seed" : args.seed,
+        "encoder" : args.encoder,
+        "encoder_weights" : args.encoder_weights,
+        "decoder" : args.decoder,
+        "optimizer" : args.optimizer,
+        "scheduler" : args.scheduler,
+        "criterion" : args.criterion,
+    }
 
-    # wandb.init(
-    #     project=args.project, entity=args.entity, name=args.experiment_name, config=CFG,
-    # )
+    wandb.init(
+        project=args.project, entity=args.entity, name=args.experiment_name, config=CFG,
+    )
 
-    # wandb.define_metric("Tr Loss", summary="min")
-    # wandb.define_metric("Tr mIoU", summary="max")
+    wandb.define_metric("Tr Loss", summary="min")
+    wandb.define_metric("Tr mIoU", summary="max")
 
-    # wandb.define_metric("Val Loss", summary="min")
-    # wandb.define_metric("Val mIoU", summary="max")
+    wandb.define_metric("Val Loss", summary="min")
+    wandb.define_metric("Val mIoU", summary="max")
 
     train(args)
 
-    # wandb.finish()
+    wandb.finish()
 

@@ -115,3 +115,5 @@ wandb/
 __MACOSX/
 
 wandb
+EDA.ipynb
+*.csv

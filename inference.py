@@ -45,7 +45,8 @@ def test(dataset_path, args):
 
     test_path = dataset_path + '/test.json'
     test_transform = A.Compose([
-                           ToTensorV2()
+                            A.Normalize(),
+                            ToTensorV2()
                            ])
     test_dataset = CustomDataLoader(data_dir=test_path, dataset_path=dataset_path, mode='test', transform=test_transform)
     test_loader = torch.utils.data.DataLoader(dataset=test_dataset,

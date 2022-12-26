@@ -32,6 +32,14 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import cv2
 
+import torch.nn.functional as F
+import multiprocessing as mp
+from utils.crf import dense_crf
+from utils.metric import scores
+
+def dense_crf_wrapper(args):
+    return dense_crf(args[0], args[1])
+
 def seed_everything(seed):
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -150,7 +158,7 @@ def train(args):
     # -- optimizer
     opt_module = getattr(import_module("torch.optim"), args.optimizer)  
     optimizer = opt_module(
-        filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=args.lr * 100
+        filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=1e-6
     )
 
     # # -- scheduler
@@ -206,26 +214,28 @@ def train(args):
                 )
         
         hist.reset()
-        # validation 주기에 따른 loss 출력 및 best model 저장
+        # # validation 주기에 따른 loss 출력 및 best model 저장
         if (epoch + 1) % val_every == 0:
-            avrg_loss, val_mIoU, IoU_by_class = validation(model, val_loader, device, criterion, epoch, args)
-            if val_mIoU > best_mIoU:
-                print(f"Best performance at epoch: {epoch + 1}")
-                print(f"Save model in {saved_dir}")
-                best_mIoU = val_mIoU
-                save_model(model, saved_dir)
-                counter = 0
-            else:
-                counter += 1
+            pass
+        #     avrg_loss, val_mIoU, IoU_by_class = validation(model, val_loader, device, criterion, epoch, args)
+        #     if val_mIoU > best_mIoU:
+        #         print(f"Best performance at epoch: {epoch + 1}")
+        #         print(f"Save model in {saved_dir}")
+        #         best_mIoU = val_mIoU
+        #         save_model(model, saved_dir)
+        #         counter = 0
+        #     else:
+        #         counter += 1
 
-            # wandb
-            wandb.log(
-                {'Val Loss': avrg_loss, 'Val mIoU': val_mIoU}
-            )
+        #     # wandb
+        #     wandb.log(
+        #         {'Val Loss':avrg_loss, 'Val mIoU': val_mIoU}
+        #     )
+        #     for u in IoU_by_class : wandb.log(u)
 
-            if counter > PATIENCE:
-                print('Early Stopping...')
-                break
+        #     if counter > PATIENCE:
+        #         print('Early Stopping...')
+        #         break
         
         if args.scheduler:
             scheduler.step()  
@@ -242,38 +252,57 @@ def validation(model, data_loader, device, criterion, epoch, args):
         total_loss = 0
         cnt = 0
         
-        # metric의 묶음을 한 번에 사용
-        metric_collection = MetricCollection({
-            "micro": MulticlassJaccardIndex(num_classes=n_class, average="micro"),
-            "macro": MulticlassJaccardIndex(num_classes=n_class, average="macro"),      # mIoU
-            "classwise": MulticlassJaccardIndex(num_classes=n_class, average="none")    # classwise IoU
-        })
-        metric_collection.cuda()
-
-        for step, (images, masks, _) in enumerate(data_loader):
+        # # metric의 묶음을 한 번에 사용
+        # metric_collection = MetricCollection({
+        #     "micro": MulticlassJaccardIndex(num_classes=n_class, average="micro"),
+        #     "macro": MulticlassJaccardIndex(num_classes=n_class, average="macro"),      # mIoU
+        #     "classwise": MulticlassJaccardIndex(num_classes=n_class, average="none")    # classwise IoU
+        # })
+        # metric_collection.cuda()
+        preds, gts = [], []
+        for step, (images, masks, _) in enumerate(tqdm(data_loader)):
             
             images = torch.stack(images)       
             masks = torch.stack(masks).long()  
 
             images, masks = images.to(device), masks.to(device)            
             
-            outputs = model(images)
-            loss = criterion(outputs, masks)
+            logits = model(images)
+            logits = F.interpolate(
+                    logits, size=images.shape[2:], mode="bilinear", align_corners=True
+                )
+            probs = F.softmax(logits, dim=1)
+            probs = probs.data.cpu().numpy()
+            
+            pool = mp.Pool(mp.cpu_count())
+            images = images.data.cpu().numpy().astype(np.uint8).transpose(0, 2, 3, 1)
+            probs = pool.map(dense_crf_wrapper, zip(images, probs))
+            pool.close()
+
+            preds += list(np.argmax(probs, axis=1))
+            gts += list(masks.to("cpu").numpy())
+            
+            probs = torch.from_numpy(np.array(probs)).float().cuda()
+            loss = criterion(probs, masks)
             total_loss += loss
             cnt += 1
-            
-            metric_collection.update(outputs, masks)
+            # metric_collection.update(outputs, masks)
+        score = scores(gts, preds, n_class=n_class)
+        gts = torch.LongTensor(gts)
+        preds = torch.FloatTensor(preds)
         
-        result = metric_collection.compute()
-        micro = result["micro"].item()
-        macro = result["macro"].item()
-        classwise_results = result["classwise"].detach().cpu().numpy()
+        # result = metric_collection.compute()
+        # micro = result["micro"].item()
+        # macro = result["macro"].item()
+        # classwise_results = result["classwise"].detach().cpu().numpy()
+        macro = score['Mean IoU']
+        classwise_results = score['Class IoU']
         category_list = ['Background', 'General trash', 'Paper', 'Paper pack', 'Metal',
                 'Glass', 'Plastic', 'Styrofoam', 'Plastic bag', 'Battery', 'Clothing']
         IoU_by_class = [{classes : round(IoU, 4)} for IoU, classes in zip(classwise_results, category_list)]
-
+        
         avrg_loss = total_loss / cnt
-        print(f'Validation #{epoch} || Average Loss: {round(avrg_loss.item(), 4)} || macro : {round(macro, 4)} || micro: {round(micro, 4)}')
+        print(f'Validation #{epoch} || Average Loss: {round(avrg_loss.item(), 4)} || macro : {round(macro, 4)}')
         print(f'IoU by class : {IoU_by_class}')
         
     return avrg_loss, macro, IoU_by_class

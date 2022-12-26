@@ -17,6 +17,13 @@ from albumentations.pytorch import ToTensorV2
 import yaml
 from easydict import EasyDict
 
+import torch.nn.functional as F
+import multiprocessing as mp
+from utils.crf import dense_crf
+from utils.metric import scores
+
+def dense_crf_wrapper(args):
+    return dense_crf(args[0], args[1])
 
 def collate_fn(batch):
     return tuple(zip(*batch))
@@ -67,7 +74,20 @@ def test(dataset_path, args):
         for step, (imgs, image_infos) in enumerate(tqdm(test_loader)):
             
             # inference (512 x 512)
-            outs = model(torch.stack(imgs).to(device))
+            logits = model(torch.stack(imgs).to(device))
+            logits = F.interpolate(
+                    logits, size=imgs.shape[2:], mode="bilinear", align_corners=True
+                )
+            probs = F.softmax(logits, dim=1)
+            probs = probs.data.cpu().numpy()
+            
+            pool = mp.Pool(mp.cpu_count())
+            imgs = imgs.data.cpu().numpy().astype(np.uint8).transpose(0, 2, 3, 1)
+            probs = pool.map(dense_crf_wrapper, zip(imgs, probs))
+            pool.close()
+            probs = torch.from_numpy(np.array(probs)).float().cuda()
+            
+            outs = probs
             oms = torch.argmax(outs.squeeze(), dim=1).detach().cpu().numpy()
             
             # resize (256 x 256)

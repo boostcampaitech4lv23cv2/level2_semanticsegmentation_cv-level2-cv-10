@@ -31,6 +31,9 @@ from easydict import EasyDict
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import cv2
+from utils.utils import rand_bbox, copyblob
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
 
 def seed_everything(seed):
     torch.manual_seed(seed)
@@ -107,6 +110,9 @@ def train(args):
 
     # -- augmentations
     train_transform = A.Compose([
+                            A.augmentations.crops.transforms.CropNonEmptyMaskIfExists(height=384, width=384, p=0.5),
+                            A.Resize(512, 512),
+                            A.HorizontalFlip(p=0.5),
                             ToTensorV2()
                             ])
 
@@ -176,12 +182,32 @@ def train(args):
         model.train()
 
         for step, (images, masks, _) in enumerate(train_loader):
-            images = torch.stack(images)       
-            masks = torch.stack(masks).long() 
+            images = torch.stack(images)
+            masks = torch.stack(masks)
+
+            if args.copyblob:
+                for i in range(images.size()[0]):
+                    rand_idx = np.random.randint(images.size()[0])
+                    # class 4 --> class 0 
+                    copyblob(src_img=images[i], src_mask=masks[i], dst_img=images[rand_idx], dst_mask=masks[rand_idx], src_class=4, dst_class=0)
+                    # class 5  --> class 0
+                    copyblob(src_img=images[i], src_mask=masks[i], dst_img=images[rand_idx], dst_mask=masks[rand_idx], src_class=5, dst_class=0) 
+                    # class 9 --> class 0 
+                    copyblob(src_img=images[i], src_mask=masks[i], dst_img=images[rand_idx], dst_mask=masks[rand_idx], src_class=9, dst_class=0)
+                    # class 10  --> class 0
+                    copyblob(src_img=images[i], src_mask=masks[i], dst_img=images[rand_idx], dst_mask=masks[rand_idx], src_class=10, dst_class=0) 
             
             # gpu 연산을 위해 device 할당
-            images, masks = images.to(device), masks.to(device)
-                        
+            images, masks = images.to(device), masks.long().to(device)
+            
+            # generate mixed sample
+            if args.cutmix:
+                lam = np.random.beta(1., 1.)
+                rand_index = torch.randperm(images.size()[0]).cuda()
+                bbx1, bby1, bbx2, bby2 = rand_bbox(images.size(), lam)
+                images[:, :, bbx1:bbx2, bby1:bby2] = images[rand_index, :, bbx1:bbx2, bby1:bby2]
+                masks[:, bbx1:bbx2, bby1:bby2] = masks[rand_index, bbx1:bbx2, bby1:bby2]
+
             # inference
             outputs = model(images)
             
@@ -222,6 +248,7 @@ def train(args):
             wandb.log(
                 {'Val Loss': avrg_loss, 'Val mIoU': val_mIoU}
             )
+            wandb.log(IoU_by_class)
 
             if counter > PATIENCE:
                 print('Early Stopping...')
@@ -270,7 +297,7 @@ def validation(model, data_loader, device, criterion, epoch, args):
         classwise_results = result["classwise"].detach().cpu().numpy()
         category_list = ['Background', 'General trash', 'Paper', 'Paper pack', 'Metal',
                 'Glass', 'Plastic', 'Styrofoam', 'Plastic bag', 'Battery', 'Clothing']
-        IoU_by_class = [{classes : round(IoU, 4)} for IoU, classes in zip(classwise_results, category_list)]
+        IoU_by_class = {classes : round(IoU, 4) for IoU, classes in zip(classwise_results, category_list)}
 
         avrg_loss = total_loss / cnt
         print(f'Validation #{epoch} || Average Loss: {round(avrg_loss.item(), 4)} || macro : {round(macro, 4)} || micro: {round(micro, 4)}')
@@ -318,5 +345,5 @@ if __name__ == "__main__":
 
     train(args)
 
-    # wandb.finish()
+    wandb.finish()
 

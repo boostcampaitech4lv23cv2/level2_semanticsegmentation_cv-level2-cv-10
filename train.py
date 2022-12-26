@@ -1,6 +1,5 @@
 from importlib import import_module
 from pathlib import Path
-
 import os
 import random
 import time
@@ -23,6 +22,7 @@ from torchmetrics import MetricCollection
 
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+from optimizer import AdamP
 
 import wandb
 import yaml
@@ -34,6 +34,7 @@ import cv2
 from utils.utils import rand_bbox, copyblob
 import ssl
 ssl._create_default_https_context = ssl._create_unverified_context
+import datetime
 
 def seed_everything(seed):
     torch.manual_seed(seed)
@@ -59,6 +60,44 @@ def save_model(model, saved_dir, file_name='best_model.pt'):
 def collate_fn(batch):
     return tuple(zip(*batch))
 
+def save_table(table_name, model, val_loader, device):
+    table = wandb.Table(columns=['Original Image', 'Original Mask', 'Predicted Mask'], allow_mixed_types = True)
+
+    for step, (im, mask, _) in tqdm(enumerate(val_loader), total = len(val_loader)):
+
+        im = torch.stack(im)       
+        mask = torch.stack(mask).long()
+
+        im, mask, = im.to(device), mask.to(device)
+
+        _mask = model(im)
+        _, _mask = torch.max(_mask, dim=1)
+
+        plt.figure(figsize=(10,10))
+        plt.axis("off")
+        plt.imshow(im[0].permute(1,2,0).detach().cpu()[:,:,0])
+        plt.savefig("original_image.jpg")
+        plt.close()
+
+        plt.figure(figsize=(10,10))
+        plt.axis("off")
+        plt.imshow(mask.permute(1,2,0).detach().cpu()[:,:,0])
+        plt.savefig("original_mask.jpg")
+        plt.close()
+
+        plt.figure(figsize=(10,10))
+        plt.axis("off")
+        plt.imshow(_mask.permute(1,2,0).detach().cpu()[:,:,0])
+        plt.savefig("predicted_mask.jpg")
+        plt.close()
+
+        table.add_data(
+            wandb.Image(cv2.cvtColor(cv2.imread("original_image.jpg"), cv2.COLOR_BGR2RGB)),
+            wandb.Image(cv2.cvtColor(cv2.imread("original_mask.jpg"), cv2.COLOR_BGR2RGB)),
+            wandb.Image(cv2.cvtColor(cv2.imread("predicted_mask.jpg"), cv2.COLOR_BGR2RGB))
+        )
+
+    wandb.log({table_name: table})
 
 def save_table(table_name, model, val_loader, device):
   table = wandb.Table(columns=['Original Image', 'Original Mask', 'Predicted Mask'], allow_mixed_types = True)
@@ -113,11 +152,12 @@ def train(args):
                             A.augmentations.crops.transforms.CropNonEmptyMaskIfExists(height=384, width=384, p=0.5),
                             A.Resize(512, 512),
                             A.HorizontalFlip(p=0.5),
+                            # A.Resize(256,256),
                             ToTensorV2()
                             ])
 
     val_transform = A.Compose([
-                          ToTensorV2()
+                            ToTensorV2()
                           ])
     # -- data_set
     train_path = dataset_path + args.train_path
@@ -154,10 +194,13 @@ def train(args):
     criterion = create_criterion(args.criterion)
 
     # -- optimizer
-    opt_module = getattr(import_module("torch.optim"), args.optimizer)  
-    optimizer = opt_module(
-        filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=1e-6
-    )
+    if args.optimizer == "AdamP" :
+        optimizer = AdamP(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, betas=(0.9, 0.999), weight_decay=1e-2)
+    else :
+        opt_module = getattr(import_module("torch.optim"), args.optimizer)  
+        optimizer = opt_module(
+            filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=1e-6
+        )
 
     # # -- scheduler
     if args.scheduler:
@@ -178,7 +221,10 @@ def train(args):
 
     # average = macro가 기본 옵션입니다
     hist = MulticlassJaccardIndex(num_classes=n_class).cuda()
+    use_amp = True
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
     for epoch in range(args.epochs):
+        start = datetime.datetime.now()
         model.train()
 
         for step, (images, masks, _) in enumerate(train_loader):
@@ -196,7 +242,8 @@ def train(args):
                     copyblob(src_img=images[i], src_mask=masks[i], dst_img=images[rand_idx], dst_mask=masks[rand_idx], src_class=9, dst_class=0)
                     # class 10  --> class 0
                     copyblob(src_img=images[i], src_mask=masks[i], dst_img=images[rand_idx], dst_mask=masks[rand_idx], src_class=10, dst_class=0) 
-            
+        
+
             # gpu 연산을 위해 device 할당
             images, masks = images.to(device), masks.long().to(device)
             
@@ -210,13 +257,23 @@ def train(args):
 
             # inference
             outputs = model(images)
+            images, masks = images.to(device), masks.to(device)
+
+            with torch.cuda.amp.autocast(enabled=use_amp) :
+                        
+                # inference
+                outputs = model(images)
             
-            # loss 계산 (cross entropy loss)
-            loss = criterion(outputs, masks)
-            loss.backward()
+                # loss 계산 (cross entropy loss)
+                loss = criterion(outputs, masks)
+
+            # loss.backward()
+            scaler.scale(loss).backward()
 
             if step % NUM_ACCUM == 0:
-                optimizer.step()
+                # optimizer.step()
+                scaler.step(optimizer)
+                scaler.update()
                 optimizer.zero_grad()
             
             # batch에 대한 mIoU 계산, baseline code는 누적을 계산합니다
@@ -244,6 +301,11 @@ def train(args):
             else:
                 counter += 1
 
+            # check time 
+            end = datetime.datetime.now()
+            time = end-start
+            print("처리시간:",time)
+
             # wandb
             wandb.log(
                 {'Val Loss': avrg_loss, 'Val mIoU': val_mIoU}
@@ -259,6 +321,8 @@ def train(args):
 
     save_table("Predictions", model, val_loader, device)
    
+
+    save_table("Predictions", model, val_loader, device)
 
 def validation(model, data_loader, device, criterion, epoch, args):
     print(f'Start validation!')

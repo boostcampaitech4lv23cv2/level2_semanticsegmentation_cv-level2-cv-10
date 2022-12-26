@@ -114,3 +114,6 @@ wandb/
 .idea/
 __MACOSX/
 
+wandb
+EDA.ipynb
+*.csv

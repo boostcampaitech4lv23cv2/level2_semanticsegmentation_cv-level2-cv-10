@@ -34,7 +34,6 @@ import cv2
 from utils.utils import rand_bbox, copyblob
 import ssl
 ssl._create_default_https_context = ssl._create_unverified_context
-import datetime
 
 def seed_everything(seed):
     torch.manual_seed(seed)
@@ -224,70 +223,75 @@ def train(args):
     use_amp = True
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
     for epoch in range(args.epochs):
-        start = datetime.datetime.now()
         model.train()
 
-        for step, (images, masks, _) in enumerate(train_loader):
-            images = torch.stack(images)
-            masks = torch.stack(masks)
+        with tqdm(total=len(train_loader)) as pbar:
+            for step, (images, masks, _) in enumerate(train_loader):
+                images = torch.stack(images)
+                masks = torch.stack(masks)
 
-            if args.copyblob:
-                for i in range(images.size()[0]):
-                    rand_idx = np.random.randint(images.size()[0])
-                    # class 4 --> class 0 
-                    copyblob(src_img=images[i], src_mask=masks[i], dst_img=images[rand_idx], dst_mask=masks[rand_idx], src_class=4, dst_class=0)
-                    # class 5  --> class 0
-                    copyblob(src_img=images[i], src_mask=masks[i], dst_img=images[rand_idx], dst_mask=masks[rand_idx], src_class=5, dst_class=0) 
-                    # class 9 --> class 0 
-                    copyblob(src_img=images[i], src_mask=masks[i], dst_img=images[rand_idx], dst_mask=masks[rand_idx], src_class=9, dst_class=0)
-                    # class 10  --> class 0
-                    copyblob(src_img=images[i], src_mask=masks[i], dst_img=images[rand_idx], dst_mask=masks[rand_idx], src_class=10, dst_class=0) 
-        
-
-            # gpu 연산을 위해 device 할당
-            images, masks = images.to(device), masks.long().to(device)
+                if args.copyblob:
+                    for i in range(images.size()[0]):
+                        rand_idx = np.random.randint(images.size()[0])
+                        # class 4 --> class 0 
+                        copyblob(src_img=images[i], src_mask=masks[i], dst_img=images[rand_idx], dst_mask=masks[rand_idx], src_class=4, dst_class=0)
+                        # class 5  --> class 0
+                        copyblob(src_img=images[i], src_mask=masks[i], dst_img=images[rand_idx], dst_mask=masks[rand_idx], src_class=5, dst_class=0) 
+                        # class 9 --> class 0 
+                        copyblob(src_img=images[i], src_mask=masks[i], dst_img=images[rand_idx], dst_mask=masks[rand_idx], src_class=9, dst_class=0)
+                        # class 10  --> class 0
+                        copyblob(src_img=images[i], src_mask=masks[i], dst_img=images[rand_idx], dst_mask=masks[rand_idx], src_class=10, dst_class=0) 
             
-            # generate mixed sample
-            if args.cutmix:
-                lam = np.random.beta(1., 1.)
-                rand_index = torch.randperm(images.size()[0]).cuda()
-                bbx1, bby1, bbx2, bby2 = rand_bbox(images.size(), lam)
-                images[:, :, bbx1:bbx2, bby1:bby2] = images[rand_index, :, bbx1:bbx2, bby1:bby2]
-                masks[:, bbx1:bbx2, bby1:bby2] = masks[rand_index, bbx1:bbx2, bby1:bby2]
 
-            # inference
-            outputs = model(images)
-            images, masks = images.to(device), masks.to(device)
+                # gpu 연산을 위해 device 할당
+                images, masks = images.to(device), masks.long().to(device)
+                
+                # generate mixed sample
+                if args.cutmix:
+                    lam = np.random.beta(1., 1.)
+                    rand_index = torch.randperm(images.size()[0]).cuda()
+                    bbx1, bby1, bbx2, bby2 = rand_bbox(images.size(), lam)
+                    images[:, :, bbx1:bbx2, bby1:bby2] = images[rand_index, :, bbx1:bbx2, bby1:bby2]
+                    masks[:, bbx1:bbx2, bby1:bby2] = masks[rand_index, bbx1:bbx2, bby1:bby2]
 
-            with torch.cuda.amp.autocast(enabled=use_amp) :
-                        
                 # inference
                 outputs = model(images)
-            
-                # loss 계산 (cross entropy loss)
-                loss = criterion(outputs, masks)
+                images, masks = images.to(device), masks.to(device)
 
-            # loss.backward()
-            scaler.scale(loss).backward()
+                with torch.cuda.amp.autocast(enabled=use_amp) :
+                            
+                    # inference
+                    outputs = model(images)
+                
+                    # loss 계산 (cross entropy loss)
+                    loss = criterion(outputs, masks)
 
-            if step % NUM_ACCUM == 0:
-                # optimizer.step()
-                scaler.step(optimizer)
-                scaler.update()
-                optimizer.zero_grad()
+                # loss.backward()
+                scaler.scale(loss).backward()
+
+                if step % NUM_ACCUM == 0:
+                    # optimizer.step()
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad()
+                
+                # batch에 대한 mIoU 계산, baseline code는 누적을 계산합니다
+                mIoU = hist(outputs, masks).item()
+                pbar.update(1)
+                
+                logging = {
+                    'Tr Loss': round(loss.item(),4),
+                    'Tr mIoU': round(mIoU,4),
+                }
+                pbar.set_postfix(logging)
+
+                # step 주기에 따른 loss 출력
+                if (step + 1) % args.log_interval == 0:
+                    current_lr = get_lr(optimizer)
+                    logging['lr'] = current_lr
+                    # wandb
+                    wandb.log(logging)
             
-            # batch에 대한 mIoU 계산, baseline code는 누적을 계산합니다
-            mIoU = hist(outputs, masks).item()
-            
-            # step 주기에 따른 loss 출력
-            if (step + 1) % args.log_interval == 0:
-                current_lr = get_lr(optimizer)
-                print(f'Epoch [{epoch+1}/{args.epochs}] || Step [{step+1}/{len(train_loader)}] || Loss: {round(loss.item(),4)} || mIoU: {round(mIoU,4)}')
-                # wandb
-                wandb.log(
-                    {'Tr Loss': loss.item(), 'Tr mIoU': mIoU, 'lr': current_lr}
-                )
-        
         hist.reset()
         # validation 주기에 따른 loss 출력 및 best model 저장
         if (epoch + 1) % val_every == 0:
@@ -301,11 +305,6 @@ def train(args):
             else:
                 counter += 1
 
-            # check time 
-            end = datetime.datetime.now()
-            time = end-start
-            print("처리시간:",time)
-
             # wandb
             wandb.log(
                 {'Val Loss': avrg_loss, 'Val mIoU': val_mIoU}
@@ -318,9 +317,6 @@ def train(args):
         
         if args.scheduler:
             scheduler.step()  
-
-    save_table("Predictions", model, val_loader, device)
-   
 
     save_table("Predictions", model, val_loader, device)
 
@@ -341,7 +337,7 @@ def validation(model, data_loader, device, criterion, epoch, args):
         })
         metric_collection.cuda()
 
-        for step, (images, masks, _) in enumerate(data_loader):
+        for step, (images, masks, _) in enumerate(tqdm(data_loader)):
             
             images = torch.stack(images)       
             masks = torch.stack(masks).long()  

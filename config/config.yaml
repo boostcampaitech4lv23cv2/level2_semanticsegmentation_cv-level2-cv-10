@@ -1,17 +1,17 @@
 train:
-  experiment_name: "base+FP16"
+  experiment_name: "DeepLabV3+eff_b0"
   train_path: '/train.json'
   val_path: '/val.json'
   batch_size: 8 # "input batch size for training"
-  criterion: cross_entropy # "criterion type"
+  criterion: focal # "criterion type"
   epochs: 100 # "number of epochs to train"
   log_interval: 25 # "how many batches to wait before logging training status"
   grad_accum: 1 # "grad_accumulation"
   lr: 0.0001 # "learning rate"
   encoder: "efficientnet-b0"  # "encoder name"
   encoder_weights: "imagenet" # "pretrained weights"
-  decoder: Unet # "decoder name"
-  optimizer: "Adam" 
+  decoder: DeepLabV3 # "decoder name"
+  optimizer: "AdamP" 
   seed: 42 # "random seed"
   valid_batch_size: 8 # "input batch size for validing"
   patience: 10 # early stopping patience
@@ -24,5 +24,5 @@ test:
   batch_size: 8 # "input batch size for validing"
   encoder: "efficientnet-b0"  # "encoder name"
   encoder_weights: "imagenet" # "pretrained weights"
-  decoder: Unet # "decoder name"
+  decoder: DeepLabV3 # "decoder name"
   output_dir: /opt/ml/input/cv_10/output

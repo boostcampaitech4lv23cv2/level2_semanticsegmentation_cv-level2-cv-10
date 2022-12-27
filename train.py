@@ -170,13 +170,15 @@ def train(args):
                               batch_size=args.batch_size,
                               shuffle=True,
                               num_workers=4,
-                              collate_fn=collate_fn)
+                              collate_fn=collate_fn,
+                              drop_last = True)
 
     val_loader = DataLoader(dataset=val_dataset, 
                             batch_size=args.valid_batch_size,
                             shuffle=False,
                             num_workers=4,
-                            collate_fn=collate_fn)
+                            collate_fn=collate_fn, 
+                            drop_last = True)
                                          
     # -- model
     model_module = getattr(smp, args.decoder)
@@ -185,6 +187,7 @@ def train(args):
         encoder_weights=args.encoder_weights,     # use `imagenet` pre-trained weights for encoder initialization
         in_channels=3,                  # model input channels (1 for gray-scale images, 3 for RGB, etc.)
         classes=11,                     # model output channels (number of classes in your dataset)
+        # encoder_output_stride=32,      # set encoder output stride
     )
     # device 할당
     model = model.to(device)   
@@ -294,13 +297,15 @@ def train(args):
             
         hist.reset()
         # validation 주기에 따른 loss 출력 및 best model 저장
-        if (epoch + 1) % val_every == 0:
+        if epoch % val_every == 0:
             avrg_loss, val_mIoU, IoU_by_class = validation(model, val_loader, device, criterion, epoch, args)
             if val_mIoU > best_mIoU:
                 print(f"Best performance at epoch: {epoch + 1}")
                 print(f"Save model in {saved_dir}")
                 best_mIoU = val_mIoU
-                save_model(model, saved_dir)
+                # save model weights
+                file_name = "best_model.pth"
+                torch.save(model.state_dict(), os.path.join(saved_dir, file_name))
                 counter = 0
             else:
                 counter += 1

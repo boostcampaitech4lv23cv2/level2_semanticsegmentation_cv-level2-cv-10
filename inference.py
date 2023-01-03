@@ -16,25 +16,25 @@ from albumentations.pytorch import ToTensorV2
 
 import yaml
 from easydict import EasyDict
-
+import ttach as tta
+from model.swin_l import register_encoder
 
 def collate_fn(batch):
     return tuple(zip(*batch))
 
 
-def load_model(encoder, encoder_weights, decoder, device):
+def load_model(encoder, encoder_weights, decoder, device, model_path):
     model_module = getattr(smp, decoder)
     model = model_module(
         encoder_name=encoder,
         encoder_weights=encoder_weights,     
         in_channels=3,               
-        classes=11,                     
+        classes=11,  
+        encoder_output_stride=32                   
     )
-    model_path = './saved/best_model.pt'
     # best model 불러오기
     checkpoint = torch.load(model_path, map_location=device)
-    state_dict = checkpoint.state_dict()
-    model.load_state_dict(state_dict)
+    model.load_state_dict(checkpoint)
 
     return model
 
@@ -45,7 +45,6 @@ def test(dataset_path, args):
 
     test_path = dataset_path + '/test.json'
     test_transform = A.Compose([
-                            A.Normalize(),
                             ToTensorV2()
                            ])
     test_dataset = CustomDataLoader(data_dir=test_path, dataset_path=dataset_path, mode='test', transform=test_transform)
@@ -57,9 +56,19 @@ def test(dataset_path, args):
     size = 256
     transform = A.Compose([A.Resize(size, size)])
     print('Start prediction!!')
-
-    model = load_model(args.encoder, args.encoder_weights, args.decoder, device).to(device)
+    register_encoder()
+    model = load_model(args.encoder, args.encoder_weights, args.decoder, device, args.model_path).to(device)
     model.eval()
+    
+    if args.tta:
+        tta_transforms = tta.Compose(
+        [
+            tta.HorizontalFlip(),
+            tta.Rotate90(angles=[0, 180]),
+            tta.Scale(scales=[1, 2, 4])       
+        ]
+        )
+        tta_model = tta.SegmentationTTAWrapper(model, tta_transforms)
 
     file_name_list = []
     preds_array = np.empty((0, size*size), dtype=np.long)
@@ -68,7 +77,10 @@ def test(dataset_path, args):
         for step, (imgs, image_infos) in enumerate(tqdm(test_loader)):
             
             # inference (512 x 512)
-            outs = model(torch.stack(imgs).to(device))
+            if args.tta:
+                outs = tta_model(torch.stack(imgs).to(device))
+            else:
+                outs = model(torch.stack(imgs).to(device))
             oms = torch.argmax(outs.squeeze(), dim=1).detach().cpu().numpy()
             
             # resize (256 x 256)

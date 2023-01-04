@@ -3,7 +3,7 @@ train:
   train_path: '/train.json'
   val_path: '/val.json'
   batch_size: 8 # "input batch size for training"
-  criterion: cross_entropy # "criterion type"
+  criterion: ce_dice_focal # "criterion type"
   epochs: 50 # "number of epochs to train"
   log_interval: 25 # "how many batches to wait before logging training status"
   grad_accum: 1 # "grad_accumulation"

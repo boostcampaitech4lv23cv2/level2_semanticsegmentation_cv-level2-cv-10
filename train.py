@@ -216,26 +216,25 @@ def train(args):
         hist.reset()
         # # validation 주기에 따른 loss 출력 및 best model 저장
         if (epoch + 1) % val_every == 0:
-            pass
-        #     avrg_loss, val_mIoU, IoU_by_class = validation(model, val_loader, device, criterion, epoch, args)
-        #     if val_mIoU > best_mIoU:
-        #         print(f"Best performance at epoch: {epoch + 1}")
-        #         print(f"Save model in {saved_dir}")
-        #         best_mIoU = val_mIoU
-        #         save_model(model, saved_dir)
-        #         counter = 0
-        #     else:
-        #         counter += 1
+            avrg_loss, val_mIoU, IoU_by_class = validation(model, val_loader, device, criterion, epoch, args)
+            if val_mIoU > best_mIoU:
+                print(f"Best performance at epoch: {epoch + 1}")
+                print(f"Save model in {saved_dir}")
+                best_mIoU = val_mIoU
+                save_model(model, saved_dir)
+                counter = 0
+            else:
+                counter += 1
 
-        #     # wandb
-        #     wandb.log(
-        #         {'Val Loss':avrg_loss, 'Val mIoU': val_mIoU}
-        #     )
-        #     for u in IoU_by_class : wandb.log(u)
+            # wandb
+            wandb.log(
+                {'Val Loss':avrg_loss, 'Val mIoU': val_mIoU}
+            )
+            for u in IoU_by_class : wandb.log(u)
 
-        #     if counter > PATIENCE:
-        #         print('Early Stopping...')
-        #         break
+            if counter > PATIENCE:
+                print('Early Stopping...')
+                break
         
         if args.scheduler:
             scheduler.step()  

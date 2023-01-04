@@ -87,14 +87,28 @@ class LovaszSoftmax(nn.Module):
         logits = F.softmax(output, dim=1)
         loss = lovasz_softmax(logits, target, ignore=self.ignore_index)
         return loss
-
+    
+class CE_Dice_focalLoss(nn.Module):
+    def __init__(self, smooth=1, reduction='mean', ignore_index=255, weight=None):
+        super(CE_Dice_focalLoss, self).__init__()
+        self.smooth = smooth
+        self.dice = DiceLoss()
+        self.cross_entropy = nn.CrossEntropyLoss(weight=weight, reduction=reduction, ignore_index=ignore_index)
+        self.focal = FocalLoss()
+        
+    def forward(self, output, target):
+        CE_loss = self.cross_entropy(output, target)
+        dice_loss = self.dice(output, target)
+        focal_loss = self.focal(output, target)
+        return CE_loss + dice_loss + focal_loss
 
 _criterion_entrypoints = {
     "cross_entropy": CrossEntropyLoss2d,
     "dice": DiceLoss,
     "focal": FocalLoss,
     "ce_dice": CE_DiceLoss,
-    "lovaz": LovaszSoftmax
+    "lovaz": LovaszSoftmax,
+    "ce_dice_focal": CE_Dice_focalLoss,
 }
 
 

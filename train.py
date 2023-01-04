@@ -1,6 +1,5 @@
 from importlib import import_module
 from pathlib import Path
-
 import os
 import random
 import time
@@ -23,6 +22,7 @@ from torchmetrics import MetricCollection
 
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
+from optimizer import AdamP
 
 import wandb
 import yaml
@@ -31,6 +31,9 @@ from easydict import EasyDict
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import cv2
+from utils.utils import rand_bbox, copyblob
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
 
 import torch.nn.functional as F
 import multiprocessing as mp
@@ -64,6 +67,44 @@ def save_model(model, saved_dir, file_name='best_model.pt'):
 def collate_fn(batch):
     return tuple(zip(*batch))
 
+def save_table(table_name, model, val_loader, device):
+    table = wandb.Table(columns=['Original Image', 'Original Mask', 'Predicted Mask'], allow_mixed_types = True)
+
+    for step, (im, mask, _) in tqdm(enumerate(val_loader), total = len(val_loader)):
+
+        im = torch.stack(im)       
+        mask = torch.stack(mask).long()
+
+        im, mask, = im.to(device), mask.to(device)
+
+        _mask = model(im)
+        _, _mask = torch.max(_mask, dim=1)
+
+        plt.figure(figsize=(10,10))
+        plt.axis("off")
+        plt.imshow(im[0].permute(1,2,0).detach().cpu()[:,:,0])
+        plt.savefig("original_image.jpg")
+        plt.close()
+
+        plt.figure(figsize=(10,10))
+        plt.axis("off")
+        plt.imshow(mask.permute(1,2,0).detach().cpu()[:,:,0])
+        plt.savefig("original_mask.jpg")
+        plt.close()
+
+        plt.figure(figsize=(10,10))
+        plt.axis("off")
+        plt.imshow(_mask.permute(1,2,0).detach().cpu()[:,:,0])
+        plt.savefig("predicted_mask.jpg")
+        plt.close()
+
+        table.add_data(
+            wandb.Image(cv2.cvtColor(cv2.imread("original_image.jpg"), cv2.COLOR_BGR2RGB)),
+            wandb.Image(cv2.cvtColor(cv2.imread("original_mask.jpg"), cv2.COLOR_BGR2RGB)),
+            wandb.Image(cv2.cvtColor(cv2.imread("predicted_mask.jpg"), cv2.COLOR_BGR2RGB))
+        )
+
+    wandb.log({table_name: table})
 
 def save_table(table_name, model, val_loader, device):
   table = wandb.Table(columns=['Original Image', 'Original Mask', 'Predicted Mask'], allow_mixed_types = True)
@@ -115,11 +156,15 @@ def train(args):
 
     # -- augmentations
     train_transform = A.Compose([
+                            A.augmentations.crops.transforms.CropNonEmptyMaskIfExists(height=384, width=384, p=0.5),
+                            A.Resize(512, 512),
+                            A.HorizontalFlip(p=0.5),
+                            # A.Resize(256,256),
                             ToTensorV2()
                             ])
 
     val_transform = A.Compose([
-                          ToTensorV2()
+                            ToTensorV2()
                           ])
     # -- data_set
     train_path = dataset_path + args.train_path
@@ -133,13 +178,15 @@ def train(args):
                               batch_size=args.batch_size,
                               shuffle=True,
                               num_workers=4,
-                              collate_fn=collate_fn)
+                              collate_fn=collate_fn,
+                              drop_last = True)
 
     val_loader = DataLoader(dataset=val_dataset, 
                             batch_size=args.valid_batch_size,
                             shuffle=False,
                             num_workers=4,
-                            collate_fn=collate_fn)
+                            collate_fn=collate_fn, 
+                            drop_last = True)
                                          
     # -- model
     model_module = getattr(smp, args.decoder)
@@ -148,6 +195,7 @@ def train(args):
         encoder_weights=args.encoder_weights,     # use `imagenet` pre-trained weights for encoder initialization
         in_channels=3,                  # model input channels (1 for gray-scale images, 3 for RGB, etc.)
         classes=11,                     # model output channels (number of classes in your dataset)
+        # encoder_output_stride=32,      # set encoder output stride
     )
     # device 할당
     model = model.to(device)   
@@ -156,10 +204,13 @@ def train(args):
     criterion = create_criterion(args.criterion)
 
     # -- optimizer
-    opt_module = getattr(import_module("torch.optim"), args.optimizer)  
-    optimizer = opt_module(
-        filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=1e-6
-    )
+    if args.optimizer == "AdamP" :
+        optimizer = AdamP(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, betas=(0.9, 0.999), weight_decay=1e-2)
+    else :
+        opt_module = getattr(import_module("torch.optim"), args.optimizer)  
+        optimizer = opt_module(
+            filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, weight_decay=1e-6
+        )
 
     # # -- scheduler
     if args.scheduler:
@@ -180,48 +231,94 @@ def train(args):
 
     # average = macro가 기본 옵션입니다
     hist = MulticlassJaccardIndex(num_classes=n_class).cuda()
+    use_amp = True
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
     for epoch in range(args.epochs):
         model.train()
 
-        for step, (images, masks, _) in enumerate(train_loader):
-            images = torch.stack(images)       
-            masks = torch.stack(masks).long() 
-            
-            # gpu 연산을 위해 device 할당
-            images, masks = images.to(device), masks.to(device)
-                        
-            # inference
-            outputs = model(images)
-            
-            # loss 계산 (cross entropy loss)
-            loss = criterion(outputs, masks)
-            loss.backward()
+        with tqdm(total=len(train_loader)) as pbar:
+            for step, (images, masks, _) in enumerate(train_loader):
+                images = torch.stack(images)
+                masks = torch.stack(masks)
 
-            if step % NUM_ACCUM == 0:
-                optimizer.step()
-                optimizer.zero_grad()
+                if args.copyblob:
+                    for i in range(images.size()[0]):
+                        rand_idx = np.random.randint(images.size()[0])
+                        # class 4 --> class 0 
+                        copyblob(src_img=images[i], src_mask=masks[i], dst_img=images[rand_idx], dst_mask=masks[rand_idx], src_class=4, dst_class=0)
+                        # class 5  --> class 0
+                        copyblob(src_img=images[i], src_mask=masks[i], dst_img=images[rand_idx], dst_mask=masks[rand_idx], src_class=5, dst_class=0) 
+                        # class 9 --> class 0 
+                        copyblob(src_img=images[i], src_mask=masks[i], dst_img=images[rand_idx], dst_mask=masks[rand_idx], src_class=9, dst_class=0)
+                        # class 10  --> class 0
+                        copyblob(src_img=images[i], src_mask=masks[i], dst_img=images[rand_idx], dst_mask=masks[rand_idx], src_class=10, dst_class=0) 
             
-            # batch에 대한 mIoU 계산, baseline code는 누적을 계산합니다
-            mIoU = hist(outputs, masks).item()
+
+                # gpu 연산을 위해 device 할당
+                images, masks = images.to(device), masks.long().to(device)
+                
+                # generate mixed sample
+                if args.cutmix:
+                    lam = np.random.beta(1., 1.)
+                    rand_index = torch.randperm(images.size()[0]).cuda()
+                    bbx1, bby1, bbx2, bby2 = rand_bbox(images.size(), lam)
+                    images[:, :, bbx1:bbx2, bby1:bby2] = images[rand_index, :, bbx1:bbx2, bby1:bby2]
+                    masks[:, bbx1:bbx2, bby1:bby2] = masks[rand_index, bbx1:bbx2, bby1:bby2]
+
+                # inference
+                outputs = model(images)
+                images, masks = images.to(device), masks.to(device)
+
+                with torch.cuda.amp.autocast(enabled=use_amp) :
+                            
+                    # inference
+                    outputs = model(images)
+                
+                    # loss 계산 (cross entropy loss)
+                    loss = criterion(outputs, masks)
+
+                # loss.backward()
+                scaler.scale(loss).backward()
+
+                if step % NUM_ACCUM == 0:
+                    # optimizer.step()
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad()
+                
+                # batch에 대한 mIoU 계산, baseline code는 누적을 계산합니다
+                mIoU = hist(outputs, masks).item()
+                pbar.update(1)
+                
+                logging = {
+                    'Tr Loss': round(loss.item(),4),
+                    'Tr mIoU': round(mIoU,4),
+                }
+                pbar.set_postfix(logging)
+
+                # step 주기에 따른 loss 출력
+                if (step + 1) % args.log_interval == 0:
+                    current_lr = get_lr(optimizer)
+                    logging['lr'] = current_lr
+                    # wandb
+                    wandb.log(logging)
             
-            # step 주기에 따른 loss 출력
-            if (step + 1) % args.log_interval == 0:
-                current_lr = get_lr(optimizer)
-                print(f'Epoch [{epoch+1}/{args.epochs}] || Step [{step+1}/{len(train_loader)}] || Loss: {round(loss.item(),4)} || mIoU: {round(mIoU,4)}')
-                # wandb
-                wandb.log(
-                    {'Tr Loss': loss.item(), 'Tr mIoU': mIoU, 'lr': current_lr}
-                )
-        
         hist.reset()
+<<<<<<< HEAD
         # # validation 주기에 따른 loss 출력 및 best model 저장
         if (epoch + 1) % val_every == 0:
+=======
+        # validation 주기에 따른 loss 출력 및 best model 저장
+        if epoch % val_every == 0:
+>>>>>>> master
             avrg_loss, val_mIoU, IoU_by_class = validation(model, val_loader, device, criterion, epoch, args)
             if val_mIoU > best_mIoU:
                 print(f"Best performance at epoch: {epoch + 1}")
                 print(f"Save model in {saved_dir}")
                 best_mIoU = val_mIoU
-                save_model(model, saved_dir)
+                # save model weights
+                file_name = "best_model.pth"
+                torch.save(model.state_dict(), os.path.join(saved_dir, file_name))
                 counter = 0
             else:
                 counter += 1
@@ -230,7 +327,11 @@ def train(args):
             wandb.log(
                 {'Val Loss':avrg_loss, 'Val mIoU': val_mIoU}
             )
+<<<<<<< HEAD
             for u in IoU_by_class : wandb.log(u)
+=======
+            wandb.log(IoU_by_class)
+>>>>>>> master
 
             if counter > PATIENCE:
                 print('Early Stopping...')
@@ -240,7 +341,6 @@ def train(args):
             scheduler.step()  
 
     save_table("Predictions", model, val_loader, device)
-   
 
 def validation(model, data_loader, device, criterion, epoch, args):
     print(f'Start validation!')
@@ -251,6 +351,7 @@ def validation(model, data_loader, device, criterion, epoch, args):
         total_loss = 0
         cnt = 0
         
+<<<<<<< HEAD
         # # metric의 묶음을 한 번에 사용
         # metric_collection = MetricCollection({
         #     "micro": MulticlassJaccardIndex(num_classes=n_class, average="micro"),
@@ -259,6 +360,16 @@ def validation(model, data_loader, device, criterion, epoch, args):
         # })
         # metric_collection.cuda()
         preds, gts = [], []
+=======
+        # metric의 묶음을 한 번에 사용
+        metric_collection = MetricCollection({
+            "micro": MulticlassJaccardIndex(num_classes=n_class, average="micro"),
+            "macro": MulticlassJaccardIndex(num_classes=n_class, average="macro"),      # mIoU
+            "classwise": MulticlassJaccardIndex(num_classes=n_class, average="none")    # classwise IoU
+        })
+        metric_collection.cuda()
+
+>>>>>>> master
         for step, (images, masks, _) in enumerate(tqdm(data_loader)):
             
             images = torch.stack(images)       
@@ -298,8 +409,13 @@ def validation(model, data_loader, device, criterion, epoch, args):
         classwise_results = score['Class IoU']
         category_list = ['Background', 'General trash', 'Paper', 'Paper pack', 'Metal',
                 'Glass', 'Plastic', 'Styrofoam', 'Plastic bag', 'Battery', 'Clothing']
+<<<<<<< HEAD
         IoU_by_class = [{classes : round(IoU, 4)} for IoU, classes in zip(classwise_results, category_list)]
         
+=======
+        IoU_by_class = {classes : round(IoU, 4) for IoU, classes in zip(classwise_results, category_list)}
+
+>>>>>>> master
         avrg_loss = total_loss / cnt
         print(f'Validation #{epoch} || Average Loss: {round(avrg_loss.item(), 4)} || macro : {round(macro, 4)}')
         print(f'IoU by class : {IoU_by_class}')

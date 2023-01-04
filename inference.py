@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 from dataloaders.DataLoader import CustomDataLoader
 
 import segmentation_models_pytorch as smp
+from segmentation_models_pytorch.decoders.deeplabv3 import DeepLabV3 # https://discuss.pytorch.org/t/problem-in-loading-the-saved-model/52408/19
 
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
@@ -30,6 +31,7 @@ def collate_fn(batch):
 
 
 def load_model(encoder, encoder_weights, decoder, device):
+    
     model_module = getattr(smp, decoder)
     model = model_module(
         encoder_name=encoder,
@@ -37,12 +39,11 @@ def load_model(encoder, encoder_weights, decoder, device):
         in_channels=3,               
         classes=11,                     
     )
-    model_path = './saved/best_model.pt'
-    # best model 불러오기
-    checkpoint = torch.load(model_path, map_location=device)
-    state_dict = checkpoint.state_dict()
-    model.load_state_dict(state_dict)
 
+    model_path = '/opt/ml/input/torch-template/saved/best_model.pth'
+    # best model 불러오기
+    # load model weights
+    model.load_state_dict(torch.load(model_path, map_location=device))
     return model
 
 
@@ -52,7 +53,7 @@ def test(dataset_path, args):
 
     test_path = dataset_path + '/test.json'
     test_transform = A.Compose([
-                           ToTensorV2()
+                            ToTensorV2(),
                            ])
     test_dataset = CustomDataLoader(data_dir=test_path, dataset_path=dataset_path, mode='test', transform=test_transform)
     test_loader = torch.utils.data.DataLoader(dataset=test_dataset,
@@ -68,7 +69,7 @@ def test(dataset_path, args):
     model.eval()
 
     file_name_list = []
-    preds_array = np.empty((0, size*size), dtype=np.long)
+    preds_array = np.empty((0, size*size), dtype=np.compat.long)
     
     with torch.no_grad():
         for step, (imgs, image_infos) in enumerate(tqdm(test_loader)):

@@ -1,7 +1,7 @@
 import math
 import torch
 from torch.optim.lr_scheduler import _LRScheduler
-
+from torch.optim.lr_scheduler import StepLR, ReduceLROnPlateau
 
 class CosineAnnealingWarmupRestarts(_LRScheduler):
     """
@@ -88,7 +88,65 @@ class CosineAnnealingWarmupRestarts(_LRScheduler):
         for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
             param_group['lr'] = lr
 
+class GradualWarmupScheduler(_LRScheduler):
+    """ Gradually warm-up(increasing) learning rate in optimizer.
+    Proposed in 'Accurate, Large Minibatch SGD: Training ImageNet in 1 Hour'.
+    Args:
+        optimizer (Optimizer): Wrapped optimizer.
+        multiplier: target learning rate = base lr * multiplier if multiplier > 1.0. if multiplier = 1.0, lr starts from 0 and ends up with the base_lr.
+        total_epoch: target learning rate is reached at total_epoch, gradually
+        after_scheduler: after target_epoch, use this scheduler(eg. ReduceLROnPlateau)
+    """
 
+    def __init__(self, optimizer, multiplier, total_epoch, after_scheduler=None):
+        self.multiplier = multiplier
+        if self.multiplier < 1.:
+            raise ValueError('multiplier should be greater thant or equal to 1.')
+        self.total_epoch = total_epoch
+        self.after_scheduler = after_scheduler
+        self.finished = False
+        super(GradualWarmupScheduler, self).__init__(optimizer)
+
+    def get_lr(self):
+        if self.last_epoch > self.total_epoch:
+            if self.after_scheduler:
+                if not self.finished:
+                    self.after_scheduler.base_lrs = [base_lr * self.multiplier for base_lr in self.base_lrs]
+                    self.finished = True
+                return self.after_scheduler.get_last_lr()
+            return [base_lr * self.multiplier for base_lr in self.base_lrs]
+
+        if self.multiplier == 1.0:
+            return [base_lr * (float(self.last_epoch) / self.total_epoch) for base_lr in self.base_lrs]
+        else:
+            return [base_lr * ((self.multiplier - 1.) * self.last_epoch / self.total_epoch + 1.) for base_lr in self.base_lrs]
+
+    def step_ReduceLROnPlateau(self, metrics, epoch=None):
+        if epoch is None:
+            epoch = self.last_epoch + 1
+        self.last_epoch = epoch if epoch != 0 else 1  # ReduceLROnPlateau is called at the end of epoch, whereas others are called at beginning
+        if self.last_epoch <= self.total_epoch:
+            warmup_lr = [base_lr * ((self.multiplier - 1.) * self.last_epoch / self.total_epoch + 1.) for base_lr in self.base_lrs]
+            for param_group, lr in zip(self.optimizer.param_groups, warmup_lr):
+                param_group['lr'] = lr
+        else:
+            if epoch is None:
+                self.after_scheduler.step(metrics, None)
+            else:
+                self.after_scheduler.step(metrics, epoch - self.total_epoch)
+
+    def step(self, epoch=None, metrics=None):
+        if type(self.after_scheduler) != ReduceLROnPlateau:
+            if self.finished and self.after_scheduler:
+                if epoch is None:
+                    self.after_scheduler.step(None)
+                else:
+                    self.after_scheduler.step(epoch - self.total_epoch)
+                self._last_lr = self.after_scheduler.get_last_lr()
+            else:
+                return super(GradualWarmupScheduler, self).step(epoch)
+        else:
+            self.step_ReduceLROnPlateau(metrics, epoch)
 
 
 _scheduler_entrypoints = {
@@ -97,6 +155,7 @@ _scheduler_entrypoints = {
     "ReduceOP" : torch.optim.lr_scheduler.ReduceLROnPlateau,
     "CosineAnnealing": torch.optim.lr_scheduler.CosineAnnealingLR,
     "CosineAnnealingWR": CosineAnnealingWarmupRestarts,
+    "GradualWR" : GradualWarmupScheduler,
 }
 
 
@@ -121,12 +180,18 @@ def create_scheduler(optimizer, scheduler_name, epochs, lr):
             scheduler = create_fn(optimizer, T_max= epochs, eta_min=lr / 1000)
         elif scheduler_name == 'CosineAnnealingWR':
             scheduler = create_fn(optimizer, 
-                                          first_cycle_steps=epochs // 8,
-                                          cycle_mult=2.0,
-                                          max_lr=lr,
-                                          min_lr=lr / 1000,
-                                          warmup_steps=epochs // 40,
-                                          gamma=0.5)
+                                        first_cycle_steps=epochs // 8,
+                                        cycle_mult=2.0,
+                                        max_lr=lr,
+                                        min_lr=lr / 1000,
+                                        warmup_steps=epochs // 40,
+                                        gamma=0.5)
+        elif scheduler_name == 'GradualWR':
+            scheduler_steplr = StepLR(optimizer, step_size=epochs // 4, gamma=0.1)
+            scheduler = create_fn(optimizer, 
+                                        multiplier=1,
+                                        total_epoch=5, 
+                                        after_scheduler=scheduler_steplr)
     else:
         raise RuntimeError("Unknown scheduler (%s)" % scheduler_name)
     return scheduler

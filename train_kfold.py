@@ -194,7 +194,7 @@ def train(args):
                                          
         # -- model
         model_module = getattr(smp, args.decoder)
-        if args.encoder == 'swin_encoder'
+        if args.encoder == 'swin_encoder':
             register_encoder()
             model = model_module(
                 encoder_name=args.encoder, # choose encoder, e.g. mobilenet_v2 or efficientnet-b7
@@ -311,7 +311,7 @@ def train(args):
             hist.reset()
             # validation 주기에 따른 loss 출력 및 best model 저장
             if (epoch + 1) % val_every == 0:
-                avrg_loss, val_mIoU, IoU_by_class = validation(model, val_loader, device, criterion, epoch, args)
+                avrg_loss, val_mIoU, IoU_by_class = validation(model, val_loader, device, criterion1, epoch, args)
                 if val_mIoU > best_mIoU:
                     print(f"Best performance at epoch: {epoch + 1}")
                     print(f"Save model in {saved_dir}")
@@ -408,7 +408,8 @@ if __name__ == "__main__":
         "decoder" : args.decoder,
         "optimizer" : args.optimizer,
         "scheduler" : args.scheduler,
-        "criterion" : args.criterion,
+        "criterion1" : args.criterion1,
+        "criterion2" : args.criterion2
     }
 
     wandb.init(

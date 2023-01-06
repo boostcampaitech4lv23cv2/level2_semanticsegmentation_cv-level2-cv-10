@@ -37,7 +37,6 @@ ssl._create_default_https_context = ssl._create_unverified_context
 from model.swin_l import register_encoder
 from model.hrnet import get_seg_model
 
-from torch.optim.swa_utils import AveragedModel, SWALR
 
 def seed_everything(seed):
     torch.manual_seed(seed)
@@ -54,7 +53,7 @@ def get_lr(optimizer):
         return param_group["lr"]
 
 
-def save_model(model, saved_dir, file_name='best_model.pth'):
+def save_model(model, saved_dir, file_name='best_4.pth'):
     output_path = os.path.join(saved_dir, file_name)
     torch.save(model.state_dict(), output_path)
 
@@ -156,7 +155,6 @@ def train(args):
                             A.OneOf([
                                 A.Flip(p=0.5),
                                 A.HorizontalFlip(p=0.5),
-                                A.ShiftScaleRotate(p=0.5),
                               ], p=0.5),
                             A.OneOf([
                                   A.Blur(p=0.5),
@@ -194,17 +192,24 @@ def train(args):
                                          
     # -- model
     model_module = getattr(smp, args.decoder)
-    register_encoder()
-    model = model_module(
+    if args.encoder == 'swin_encoder':
+        register_encoder()
+        model = model_module(
+            encoder_name=args.encoder, # choose encoder, e.g. mobilenet_v2 or efficientnet-b7
+            encoder_weights=args.encoder_weights,     # use `imagenet` pre-trained weights for encoder initialization
+            in_channels=3,                  # model input channels (1 for gray-scale images, 3 for RGB, etc.)
+            classes=11,                     # model output channels (number of classes in your dataset)
+            encoder_output_stride=32    
+        )
+    else:
+        model = model_module(
         encoder_name=args.encoder, # choose encoder, e.g. mobilenet_v2 or efficientnet-b7
         encoder_weights=args.encoder_weights,     # use `imagenet` pre-trained weights for encoder initialization
         in_channels=3,                  # model input channels (1 for gray-scale images, 3 for RGB, etc.)
-        classes=11,                     # model output channels (number of classes in your dataset)
-        encoder_output_stride=32
+        classes=11,                     # model output channels (number of classes in your dataset)   
     )
     # device 할당
     model = model.to(device)  
-    swa_model = torch.optim.swa_utils.AveragedModel(model)
 
     # -- loss & metric
     criterion1 = create_criterion(args.criterion1)
@@ -221,7 +226,6 @@ def train(args):
 
     # # -- scheduler
     scheduler = create_scheduler(optimizer, args.scheduler, args.epochs, args.lr)
-    swa_scheduler = SWALR(optimizer, swa_lr=args.swa_lr)
     # -- train
     n_class = 11
     best_loss, best_mIoU = np.inf, 0
@@ -264,7 +268,7 @@ def train(args):
                 # generate mixed sample
                 if args.cutmix:
                     rand = np.random.random()
-                    if rand > 0.5:
+                    if rand > 0.4:
                         lam = np.random.beta(1., 1.)
                         rand_index = torch.randperm(images.size()[0]).cuda()
                         bbx1, bby1, bbx2, bby2 = rand_bbox(images.size(), lam)
@@ -275,7 +279,7 @@ def train(args):
                 outputs = model(images)
                 images, masks = images.to(device), masks.to(device)
 
-                loss = 0.5*criterion1(outputs, masks) + 0.5*criterion2(outputs,masks)
+                loss = 0.5*criterion1(outputs, masks) + criterion2(outputs,masks)
                 loss.backward()
 
                 if step % NUM_ACCUM == 0:
@@ -297,12 +301,12 @@ def train(args):
                     current_lr = get_lr(optimizer)
                     logging['lr'] = current_lr
                     # wandb
-                    # wandb.log(logging)
+                    wandb.log(logging)
             
         hist.reset()
         # validation 주기에 따른 loss 출력 및 best model 저장
         if (epoch + 1) % val_every == 0:
-            avrg_loss, val_mIoU, IoU_by_class = validation(model, val_loader, device, criterion, epoch, args)
+            avrg_loss, val_mIoU, IoU_by_class = validation(model, val_loader, device, criterion1, epoch, args)
             if val_mIoU > best_mIoU:
                 print(f"Best performance at epoch: {epoch + 1}")
                 print(f"Save model in {saved_dir}")
@@ -313,28 +317,20 @@ def train(args):
                 counter += 1
 
             # wandb
-            # wandb.log(
-            #     {'Val Loss': avrg_loss, 'Val mIoU': val_mIoU}
-            # )
-            # wandb.log(IoU_by_class)
+            wandb.log(
+                {'Val Loss': avrg_loss, 'Val mIoU': val_mIoU}
+            )
+            wandb.log(IoU_by_class)
 
             if counter > PATIENCE:
                 print('Early Stopping...')
                 break
         
-        if epoch > args.swa_start:
-            swa_model.update_parameters(model)
-            swa_scheduler.step()
-        else:
+        if args.scheduler:
             if args.scheduler == 'ReduceOP':
                 scheduler.step(-val_mIoU)
             else:
                 scheduler.step()
-
-    
-    swa_model = swa_model.cpu()
-    torch.optim.swa_utils.update_bn(train_loader, swa_model)
-    save_model(swa_model, saved_dir, file_name='best_swa.pth')
 
     # save_table("Predictions", model, val_loader, device)
 
@@ -408,20 +404,21 @@ if __name__ == "__main__":
         "decoder" : args.decoder,
         "optimizer" : args.optimizer,
         "scheduler" : args.scheduler,
-        "criterion" : args.criterion,
+        "criterion1" : args.criterion1,
+        "criterion2" : args.criterion2
     }
 
-    # wandb.init(
-    #     project=args.project, entity=args.entity, name=args.experiment_name, config=CFG,
-    # )
+    wandb.init(
+        project=args.project, entity=args.entity, name=args.experiment_name, config=CFG,
+    )
 
-    # wandb.define_metric("Tr Loss", summary="min")
-    # wandb.define_metric("Tr mIoU", summary="max")
+    wandb.define_metric("Tr Loss", summary="min")
+    wandb.define_metric("Tr mIoU", summary="max")
 
-    # wandb.define_metric("Val Loss", summary="min")
-    # wandb.define_metric("Val mIoU", summary="max")
+    wandb.define_metric("Val Loss", summary="min")
+    wandb.define_metric("Val mIoU", summary="max")
 
     train(args)
 
-    # wandb.finish()
+    wandb.finish()
 

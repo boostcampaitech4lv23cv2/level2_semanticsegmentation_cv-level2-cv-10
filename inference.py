@@ -69,6 +69,7 @@ def test(dataset_path, args):
         ]
         )
         tta_model = tta.SegmentationTTAWrapper(model, tta_transforms)
+        tta_model.eval()
 
     file_name_list = []
     preds_array = np.empty((0, size*size), dtype=np.long)
@@ -122,4 +123,4 @@ for file_name, string in zip(file_names, preds):
                                    ignore_index=True)
 
 # submission.csv로 저장
-submission.to_csv(os.path.join(args.output_dir, 'best_model.csv'), index=False)
+submission.to_csv(os.path.join(args.output_dir, f'{args.model_path[8:14]}.csv'), index=False)

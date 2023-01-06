@@ -1,23 +1,21 @@
 train:
   experiment_name: "PAN_swin"
-  train_path: '/train.json'
-  val_path: '/val.json'
+  train_path: '/kfold/train_fold2.json'
+  val_path: '/kfold/val_fold2.json'
   batch_size: 16 # "input batch size for training"
-  criterion1: ce_dice # "criterion type"
+  criterion1: lovaz # "criterion type"
   criterion2: focal # "criterion type"
-  epochs: 50  # "number of epochs to train"
+  epochs: 100  # "number of epochs to train"
   log_interval: 25 # "how many batches to wait before logging training status"
   grad_accum: 1 # "grad_accumulation"
-  lr: 0.0002 # "learning rate"
-  swa_start: -1 #swa_start
-  swa_lr: 0.0005 # swa-lr
+  lr: 0.0004 # "learning rate"
   encoder: "swin_encoder"  # "encoder name"
   encoder_weights: "imagenet" # "pretrained weights"
   decoder: PAN # "decoder name"
   optimizer: "AdamP" 
   seed: 42 # "random seed"
   valid_batch_size: 4 # "input batch size for validing"
-  patience: 10 # early stopping patience
+  patience: 20 # early stopping patience
   scheduler: ReduceOP
   copyblob: True
   cutmix: True
@@ -30,5 +28,5 @@ test:
   encoder_weights: "imagenet" # "pretrained weights"
   decoder: PAN # "decoder name"
   tta: false
-  model_path: ./saved/best_2.pth
+  model_path: ./saved_2/soup.pth
   output_dir: /opt/ml/input/cv_10/output

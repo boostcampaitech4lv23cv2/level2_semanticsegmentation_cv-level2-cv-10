@@ -7,6 +7,7 @@ import json
 import numpy as np
 import warnings 
 warnings.filterwarnings('ignore')
+import timm
 
 import torch
 import torch.nn as nn
@@ -98,47 +99,6 @@ def save_table(table_name, model, val_loader, device):
 
     wandb.log({table_name: table})
 
-def save_table(table_name, model, val_loader, device):
-  table = wandb.Table(columns=['Original Image', 'Original Mask', 'Predicted Mask'], allow_mixed_types = True)
-
-  for step, (im, mask, _) in tqdm(enumerate(val_loader), total = len(val_loader)):
-
-    im = torch.stack(im)       
-    mask = torch.stack(mask).long()
-
-    im, mask, = im.to(device), mask.to(device)
-
-    _mask = model(im)
-    _, _mask = torch.max(_mask, dim=1)
-
-    plt.figure(figsize=(10,10))
-    plt.axis("off")
-    plt.imshow(im[0].permute(1,2,0).detach().cpu()[:,:,0])
-    plt.savefig("original_image.jpg")
-    plt.close()
-
-    plt.figure(figsize=(10,10))
-    plt.axis("off")
-    plt.imshow(mask.permute(1,2,0).detach().cpu()[:,:,0])
-    plt.savefig("original_mask.jpg")
-    plt.close()
-
-    plt.figure(figsize=(10,10))
-    plt.axis("off")
-    plt.imshow(_mask.permute(1,2,0).detach().cpu()[:,:,0])
-    plt.savefig("predicted_mask.jpg")
-    plt.close()
-
-    table.add_data(
-        wandb.Image(cv2.cvtColor(cv2.imread("original_image.jpg"), cv2.COLOR_BGR2RGB)),
-        wandb.Image(cv2.cvtColor(cv2.imread("original_mask.jpg"), cv2.COLOR_BGR2RGB)),
-        wandb.Image(cv2.cvtColor(cv2.imread("predicted_mask.jpg"), cv2.COLOR_BGR2RGB))
-    )
-
-
-  wandb.log({table_name: table})
-
-
 def train(args):
     print(f'Start training...')
 
@@ -170,13 +130,17 @@ def train(args):
                               batch_size=args.batch_size,
                               shuffle=True,
                               num_workers=4,
-                              collate_fn=collate_fn)
+                              collate_fn=collate_fn,
+                              drop_last=True
+                              )
 
     val_loader = DataLoader(dataset=val_dataset, 
                             batch_size=args.valid_batch_size,
                             shuffle=False,
                             num_workers=4,
-                            collate_fn=collate_fn)
+                            collate_fn=collate_fn,
+                            drop_last=True
+                            )
                                          
     # -- model
     model_module = getattr(smp, args.decoder)
@@ -185,7 +149,9 @@ def train(args):
         encoder_weights=args.encoder_weights,     # use `imagenet` pre-trained weights for encoder initialization
         in_channels=3,                  # model input channels (1 for gray-scale images, 3 for RGB, etc.)
         classes=11,                     # model output channels (number of classes in your dataset)
+        # encoder_output_stride=32 # Mit model
     )
+    # model = getattr(import_module("model"), "getModel")()
     # device 할당
     model = model.to(device)   
 
@@ -194,7 +160,7 @@ def train(args):
 
     # -- optimizer
     if args.optimizer == "AdamP" :
-        optimizer = AdamP(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, betas=(0.9, 0.999), weight_decay=1e-2)
+        optimizer = AdamP(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr, betas=(0.9, 0.999), weight_decay=1e-3)
     else :
         opt_module = getattr(import_module("torch.optim"), args.optimizer)  
         optimizer = opt_module(
@@ -300,7 +266,7 @@ def train(args):
                 print(f"Best performance at epoch: {epoch + 1}")
                 print(f"Save model in {saved_dir}")
                 best_mIoU = val_mIoU
-                save_model(model, saved_dir)
+                save_model(model, saved_dir, file_name=args.experiment_name + '.pt')
                 counter = 0
             else:
                 counter += 1

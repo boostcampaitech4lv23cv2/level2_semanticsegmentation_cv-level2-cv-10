@@ -19,9 +19,9 @@ class CosineAnnealingWarmupRestarts(_LRScheduler):
                  optimizer : torch.optim.Optimizer,
                  first_cycle_steps : int,
                  cycle_mult : float = 1.,
-                 max_lr : float = 0.1,
-                 min_lr : float = 0.001,
-                 warmup_steps : int = 0,
+                 max_lr : float = 0.001,
+                 min_lr : float = 0.00001,
+                 warmup_steps : int = 100,
                  gamma : float = 1.,
                  last_epoch : int = -1
         ):
@@ -183,7 +183,7 @@ def create_scheduler(optimizer, scheduler_name, epochs, lr):
                                         first_cycle_steps=epochs // 8,
                                         cycle_mult=2.0,
                                         max_lr=lr,
-                                        min_lr=lr / 1000,
+                                        min_lr=lr / 100,
                                         warmup_steps=epochs // 40,
                                         gamma=0.5)
         elif scheduler_name == 'GradualWR':

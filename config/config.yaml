@@ -1,28 +1,67 @@
 train:
-  experiment_name: "base+FP16"
+  experiment_name: "PAN+mit_5_fix"
   train_path: '/train.json'
   val_path: '/val.json'
   batch_size: 8 # "input batch size for training"
-  criterion: cross_entropy # "criterion type"
+  criterion: fc_ls_dicd # "criterion type"
   epochs: 100 # "number of epochs to train"
   log_interval: 25 # "how many batches to wait before logging training status"
   grad_accum: 1 # "grad_accumulation"
-  lr: 0.0001 # "learning rate"
-  encoder: "efficientnet-b0"  # "encoder name"
+  lr: 0.0002 # "learning rate"
+  encoder: "mit_b5"  # "encoder name"
   encoder_weights: "imagenet" # "pretrained weights"
-  decoder: Unet # "decoder name"
-  optimizer: "Adam" 
+  decoder: "PAN" # "decoder name"
+  optimizer: "AdamP" 
   seed: 42 # "random seed"
   valid_batch_size: 8 # "input batch size for validing"
-  patience: 10 # early stopping patience
-  scheduler: false
+  patience: 15 # early stopping patience
+  scheduler: "CosineAnnealingWR"
   copyblob: True
   cutmix: True
   project: "semantic_seg"
   entity: "cv10"
 test:
   batch_size: 8 # "input batch size for validing"
-  encoder: "efficientnet-b0"  # "encoder name"
+  encoder: "mit_b5"  # "encoder name"
   encoder_weights: "imagenet" # "pretrained weights"
-  decoder: Unet # "decoder name"
-  output_dir: /opt/ml/input/cv_10/output
+  decoder: "PAN" # "decoder name"
+  tta : True
+  output_dir: /opt/ml/input/level2_semanticsegmentation_cv-level2-cv-10/output
+
+# swin
+  # batch_size: 4 # "input batch size for validing"
+  # encoder: "swinl"  # "encoder name"
+  # encoder_weights: "imagenet" # "pretrained weights"
+  # decoder: PAN # "decoder name"
+  # output_dir: /opt/ml/input/level2_semanticsegmentation_cv-level2-cv-10/output
+
+# unet++
+# train:
+#   experiment_name: "UNetpp_teb4"
+#   train_path: '/train.json'
+#   val_path: '/val.json'
+#   batch_size: 8 # "input batch size for training"
+#   criterion: ce_ls_dice # "criterion type"
+#   epochs: 100 # "number of epochs to train"
+#   log_interval: 25 # "how many batches to wait before logging training status"
+#   grad_accum: 1 # "grad_accumulation"
+#   lr: 0.0002 # "learning rate"
+#   encoder: "timm-efficientnet-b4"  # "encoder name"
+#   encoder_weights: "imagenet" # "pretrained weights"
+#   decoder: "UnetPlusPlus" # "decoder name"
+#   optimizer: "AdamP" 
+#   seed: 42 # "random seed"
+#   valid_batch_size: 8 # "input batch size for validing"
+#   patience: 20 # early stopping patience
+#   scheduler: "CosineAnnealingWR"
+#   copyblob: True
+#   cutmix: True
+#   project: "semantic_seg"
+#   entity: "cv10"
+# test:
+#   batch_size: 8 # "input batch size for validing"
+#   encoder: "timm-efficientnet-b4"  # "encoder name"
+#   encoder_weights: "imagenet" # "pretrained weights"
+#   decoder: "UnetPlusPlus" # "decoder name"
+#   tta : False
+#   output_dir: /opt/ml/input/level2_semanticsegmentation_cv-level2-cv-10/output

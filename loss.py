@@ -76,6 +76,48 @@ class CE_DiceLoss(nn.Module):
         dice_loss = self.dice(output, target)
         return CE_loss + dice_loss
 
+class FCE_DiceLoss(nn.Module):
+    def __init__(self, smooth=1, reduction='mean', ignore_index=255, weight=None):
+        super(FCE_DiceLoss, self).__init__()
+        self.smooth = smooth
+        self.dice = DiceLoss()
+        self.cross_entropy = nn.CrossEntropyLoss(weight=weight, reduction=reduction, ignore_index=ignore_index)
+        self.focal = FocalLoss()
+
+    def forward(self, output, target):
+        CE_loss = self.cross_entropy(output, target)
+        dice_loss = self.dice(output, target)
+        focal_loss = self.focal(output, target)
+        return CE_loss + dice_loss + focal_loss
+
+class FC_LS_DiceLoss(nn.Module):
+    def __init__(self, smooth=1, reduction='mean', ignore_index=255, weight=None):
+        super(FC_LS_DiceLoss, self).__init__()
+        self.smooth = smooth
+        self.dice = DiceLoss()
+        self.lovaszsoftmax = LovaszSoftmax()
+        self.focal = FocalLoss()
+
+    def forward(self, output, target):
+        ls_loss = self.lovaszsoftmax(output, target)
+        dice_loss = self.dice(output, target)
+        focal_loss = self.focal(output, target)
+        return ls_loss + dice_loss + focal_loss
+
+class CE_LS_DiceLoss(nn.Module):
+    def __init__(self, smooth=1, reduction='mean', ignore_index=255, weight=None):
+        super(CE_LS_DiceLoss, self).__init__()
+        self.smooth = smooth
+        self.dice = DiceLoss()
+        self.lovaszsoftmax = LovaszSoftmax()
+        self.cross_entropy = nn.CrossEntropyLoss(weight=weight, reduction=reduction, ignore_index=ignore_index)
+
+    def forward(self, output, target):
+        ls_loss = self.lovaszsoftmax(output, target)
+        dice_loss = self.dice(output, target)
+        CE_loss = self.cross_entropy(output, target)
+        return ls_loss + dice_loss + CE_loss
+
 class LovaszSoftmax(nn.Module):
     def __init__(self, classes='present', per_image=False, ignore_index=255):
         super(LovaszSoftmax, self).__init__()
@@ -94,7 +136,10 @@ _criterion_entrypoints = {
     "dice": DiceLoss,
     "focal": FocalLoss,
     "ce_dice": CE_DiceLoss,
-    "lovaz": LovaszSoftmax
+    "lovaz": LovaszSoftmax,
+    "fce_dice" : FCE_DiceLoss,
+    "fc_ls_dicd" : FC_LS_DiceLoss,
+    "ce_ls_dice": CE_LS_DiceLoss
 }
 
 
